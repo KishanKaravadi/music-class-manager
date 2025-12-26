@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, Navigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
+import { SpeedInsights } from "@vercel/speed-insights/next"
 
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -111,6 +112,9 @@ function App() {
                )
             } />
         </Routes>
+
+        <SpeedInsights />
+        
       </div>
     </Router>
   );
