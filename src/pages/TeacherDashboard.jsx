@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
-import { Users, DollarSign, Calendar, CheckCircle, X, Bell, Trash2, History, Search } from 'lucide-react';
+import { Users, DollarSign, Calendar, CheckCircle, X, Bell, Trash2, History, Check } from 'lucide-react'; // Added Check icon
 
 const TeacherDashboard = () => {
   const [activeRoster, setActiveRoster] = useState([]);
   const [pendingApplications, setPendingApplications] = useState([]);
   const [pendingPayments, setPendingPayments] = useState([]);
   const [paidStudentIds, setPaidStudentIds] = useState([]); 
+  const [attendanceToday, setAttendanceToday] = useState([]); // NEW: Tracks who attended today
   const [loading, setLoading] = useState(true);
   
   const [reviewingStudent, setReviewingStudent] = useState(null);
@@ -34,43 +35,28 @@ const TeacherDashboard = () => {
     fetchData();
   }, []);
 
-  // --- FIXED: History Fetching Logic ---
   const fetchHistory = async (dateString) => {
     setHistoryLoading(true);
-
-    // 1. Manually construct Local Start/End times to avoid Timezone bugs
     const [year, month, day] = dateString.split('-');
-    // Note: Month is 0-indexed in JS Date
     const startDate = new Date(year, month - 1, day, 0, 0, 0); 
     const endDate = new Date(year, month - 1, day, 23, 59, 59);
 
-    // 2. Query Ledger
     const { data, error } = await supabase
         .from('credit_ledger')
-        .select(`
-            amount, created_at, reason,
-            student:student_id (full_name, email)
-        `)
-        .lt('amount', 0) // Only look for deductions (attendance)
+        .select(`amount, created_at, reason, student:student_id (full_name, email)`)
+        .lt('amount', 0)
         .gte('created_at', startDate.toISOString())
         .lte('created_at', endDate.toISOString())
         .order('created_at', { ascending: true });
 
-    if (error) {
-        console.error(error);
-        alert("Error fetching history");
-    } else {
-        setHistoryRecords(data || []);
-    }
+    if (error) console.error(error);
+    else setHistoryRecords(data || []);
     setHistoryLoading(false);
   };
 
   useEffect(() => {
-    if (showHistory) {
-        fetchHistory(historyDate);
-    }
+    if (showHistory) fetchHistory(historyDate);
   }, [showHistory, historyDate]);
-  // -------------------------------------
 
   const fetchData = async () => {
     setLoading(true);
@@ -107,29 +93,30 @@ const TeacherDashboard = () => {
 
     // 4. Fetch APPROVED Payments for THIS Month
     const { data: approvedData } = await supabase
-      .from('payments')
-      .select('student_id')
-      .eq('status', 'approved')
-      .eq('month_for', currentMonthName); // STRICT CHECK: Must be "December" (or current)
-    
+      .from('payments').select('student_id').eq('status', 'approved').eq('month_for', currentMonthName);
     setPaidStudentIds(approvedData?.map(p => p.student_id) || []);
+
+    // 5. NEW: Fetch Today's Attendance (To color the buttons)
+    const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+    const todayEnd = new Date(); todayEnd.setHours(23,59,59,999);
+    
+    const { data: todayLedger } = await supabase
+        .from('credit_ledger')
+        .select('student_id')
+        .lt('amount', 0) // Look for deductions
+        .gte('created_at', todayStart.toISOString())
+        .lte('created_at', todayEnd.toISOString());
+    
+    const presentIds = todayLedger?.map(l => l.student_id) || [];
+    setAttendanceToday(presentIds);
     
     setLoading(false);
   };
 
-  // --- SMART REMINDERS ---
   const handleBulkReminders = () => {
     let targetStudents = activeRoster;
-
-    // 1. Remove anyone pending approval (they tried to pay)
-    targetStudents = targetStudents.filter(student => 
-        !pendingPayments.some(p => p.student_id === student.student.id)
-    );
-
-    // 2. Remove anyone who has an APPROVED payment for THIS month
-    targetStudents = targetStudents.filter(student => 
-        !paidStudentIds.includes(student.student.id)
-    );
+    targetStudents = targetStudents.filter(student => !pendingPayments.some(p => p.student_id === student.student.id));
+    targetStudents = targetStudents.filter(student => !paidStudentIds.includes(student.student.id));
     
     if (targetStudents.length === 0) return alert("Everyone is paid up or pending! No reminders needed.");
 
@@ -148,13 +135,27 @@ const TeacherDashboard = () => {
     fetchData();
   };
 
-  const handleMarkPresent = async (studentId, courseName, currentBalance) => {
-    if (currentBalance <= 0) return alert(`⛔ STOP: Student has 0 credits.`);
-    if (window.confirm(`Mark ${courseName} present?`)) {
-      await supabase.from('credit_ledger').insert([{ student_id: studentId, amount: -1, reason: `Attended ${courseName}` }]);
-      fetchData(); // This refreshes the view so History will see it
+  // --- UPDATED: Mark Present Logic ---
+  const handleMarkPresent = async (studentId, studentName, courseName, currentBalance) => {
+    // 1. Check Credits
+    if (currentBalance <= 0) return alert(`⛔ STOP: ${studentName} has 0 credits remaining.`);
+
+    // 2. Check if already marked today
+    const alreadyMarked = attendanceToday.includes(studentId);
+    let message = `Mark ${studentName} present? (-1 Credit)`;
+    
+    if (alreadyMarked) {
+        message = `⚠️ WARNING: ${studentName} is ALREADY marked present today.\n\nDo you want to mark them present AGAIN? (-1 Credit)`;
     }
+
+    // 3. Confirm
+    if (!window.confirm(message)) return;
+
+    // 4. Execute
+    await supabase.from('credit_ledger').insert([{ student_id: studentId, amount: -1, reason: `Attended ${courseName}` }]);
+    fetchData(); // Refreshes the list -> Updates color -> Updates History
   };
+  // -----------------------------------
 
   const handleArchiveStudent = async (enrollmentId, studentName) => {
     if (!window.confirm(`Archive ${studentName}?`)) return;
@@ -175,10 +176,7 @@ const TeacherDashboard = () => {
   };
 
   const isSlotOccupied = (day, time) => {
-    return activeRoster.find(s => 
-        s.preferred_days?.includes(day) && 
-        s.preferred_time?.slice(0,5) === time
-    );
+    return activeRoster.find(s => s.preferred_days?.includes(day) && s.preferred_time?.slice(0,5) === time);
   };
 
   if (loading) return <div className="p-10 flex justify-center text-indigo-600">Loading Dashboard...</div>;
@@ -190,17 +188,10 @@ const TeacherDashboard = () => {
             <h1 className="text-3xl font-bold text-gray-900">Teacher Dashboard</h1>
             
             <div className="flex gap-2">
-                <button 
-                    onClick={() => setShowHistory(true)}
-                    className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-gray-50 transition-colors"
-                >
+                <button onClick={() => setShowHistory(true)} className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-gray-50 transition-colors">
                     <History size={18} /> History
                 </button>
-
-                <button 
-                    onClick={handleBulkReminders}
-                    className="bg-orange-100 text-orange-700 px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-orange-200 transition-colors"
-                >
+                <button onClick={handleBulkReminders} className="bg-orange-100 text-orange-700 px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-orange-200 transition-colors">
                     <Bell size={18} /> Reminders
                 </button>
             </div>
@@ -209,17 +200,13 @@ const TeacherDashboard = () => {
         {/* 1. NEW APPLICATIONS */}
         {pendingApplications.length > 0 && (
           <div className="mb-12 bg-blue-50 border border-blue-200 rounded-xl p-6">
-             <h2 className="text-xl font-bold text-blue-900 mb-4 flex items-center gap-2">
-              <Users className="text-blue-600" /> New Enrollment Requests ({pendingApplications.length})
-             </h2>
+             <h2 className="text-xl font-bold text-blue-900 mb-4 flex items-center gap-2"><Users className="text-blue-600" /> New Requests ({pendingApplications.length})</h2>
              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                {pendingApplications.map(app => (
                  <div key={app.id} className="bg-white p-5 rounded-lg shadow-sm">
                    <h3 className="font-bold text-lg">{app.student.full_name}</h3>
                    <div className="text-sm text-gray-500 mb-2">{app.courses.name} ({app.courses.category})</div>
-                   <div className="text-sm font-medium text-gray-700 bg-gray-100 p-2 rounded mb-3">
-                        Requested: {app.preferred_days?.join(", ")} <br/> @ {app.preferred_time}
-                   </div>
+                   <div className="text-sm font-medium text-gray-700 bg-gray-100 p-2 rounded mb-3">Requested: {app.preferred_days?.join(", ")} <br/> @ {app.preferred_time}</div>
                    <button onClick={() => setReviewingStudent(app)} className="w-full bg-blue-600 text-white font-bold py-2 rounded hover:bg-blue-700 flex items-center justify-center gap-2">
                      <Calendar size={16}/> Review Schedule
                    </button>
@@ -232,9 +219,7 @@ const TeacherDashboard = () => {
         {/* 2. PENDING PAYMENTS */}
         {pendingPayments.length > 0 && (
           <div className="mb-12">
-             <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
-              <DollarSign className="text-yellow-600" /> Pending Fees
-             </h2>
+             <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2"><DollarSign className="text-yellow-600" /> Pending Fees</h2>
              <div className="grid gap-4 md:grid-cols-3">
                {pendingPayments.map(p => (
                  <div key={p.id} className="bg-white p-5 rounded-xl shadow-sm border border-yellow-200">
@@ -255,64 +240,65 @@ const TeacherDashboard = () => {
               <tr><th className="p-4">Student</th><th className="p-4">Schedule</th><th className="p-4">Credits</th><th className="p-4 text-right">Actions</th></tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {activeRoster.map((item) => (
-                <tr key={item.id} className="hover:bg-gray-50">
-                  <td className="p-4">
-                      <div className="font-bold">{item.student.full_name}</div>
-                      <div className="text-xs text-gray-500">{item.courses.name} ({item.courses.category})</div>
-                  </td>
-                  <td className="p-4">
-                      <div className="text-sm font-medium">{item.preferred_days?.join(", ")}</div>
-                      <div className="text-xs text-gray-500">{item.preferred_time}</div>
-                  </td>
-                  <td className="p-4 font-bold text-indigo-600">{item.current_balance}</td>
-                  <td className="p-4 text-right flex justify-end items-center gap-3">
-                    <button onClick={() => handleMarkPresent(item.student.id, item.courses.name, item.current_balance)} className="bg-indigo-600 text-white px-3 py-1 rounded text-sm">Present</button>
-                    <button onClick={() => handleArchiveStudent(item.id, item.student.full_name)} className="text-gray-400 hover:text-red-600 p-2" title="Archive Student"><Trash2 size={18} /></button>
-                  </td>
-                </tr>
-              ))}
+              {activeRoster.map((item) => {
+                // Check if marked present today
+                const isMarkedToday = attendanceToday.includes(item.student.id);
+
+                return (
+                    <tr key={item.id} className="hover:bg-gray-50">
+                    <td className="p-4">
+                        <div className="font-bold">{item.student.full_name}</div>
+                        <div className="text-xs text-gray-500">{item.courses.name} ({item.courses.category})</div>
+                    </td>
+                    <td className="p-4">
+                        <div className="text-sm font-medium">{item.preferred_days?.join(", ")}</div>
+                        <div className="text-xs text-gray-500">{item.preferred_time}</div>
+                    </td>
+                    <td className="p-4 font-bold text-indigo-600">{item.current_balance}</td>
+                    <td className="p-4 text-right flex justify-end items-center gap-3">
+                        
+                        {/* MARK PRESENT BUTTON (Changes Color/Text if done) */}
+                        <button 
+                            onClick={() => handleMarkPresent(item.student.id, item.student.full_name, item.courses.name, item.current_balance)} 
+                            className={`px-3 py-1 rounded text-sm font-bold flex items-center gap-1 transition-colors ${
+                                isMarkedToday 
+                                ? 'bg-green-100 text-green-700 hover:bg-green-200 border border-green-200' 
+                                : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                            }`}
+                        >
+                            {isMarkedToday && <Check size={14} strokeWidth={3} />}
+                            {isMarkedToday ? "Done" : "Present"}
+                        </button>
+
+                        <button onClick={() => handleArchiveStudent(item.id, item.student.full_name)} className="text-gray-400 hover:text-red-600 p-2" title="Archive Student">
+                            <Trash2 size={18} />
+                        </button>
+                    </td>
+                    </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* --- HISTORY MODAL (FIXED) --- */}
+      {/* --- HISTORY MODAL --- */}
       {showHistory && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 relative">
                 <button onClick={() => setShowHistory(false)} className="absolute top-4 right-4 text-gray-400 hover:text-black"><X size={28}/></button>
-                
-                <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
-                    <History className="text-indigo-600"/> Attendance History
-                </h2>
-                
+                <h2 className="text-2xl font-bold mb-6 flex items-center gap-2"><History className="text-indigo-600"/> Attendance History</h2>
                 <div className="mb-6">
                     <label className="block text-sm font-bold text-gray-700 mb-2">Select Date:</label>
-                    <input 
-                        type="date" 
-                        value={historyDate} 
-                        onChange={(e) => setHistoryDate(e.target.value)}
-                        className="w-full p-3 border rounded-lg bg-gray-50 font-bold"
-                    />
+                    <input type="date" value={historyDate} onChange={(e) => setHistoryDate(e.target.value)} className="w-full p-3 border rounded-lg bg-gray-50 font-bold"/>
                 </div>
-
                 <div className="bg-gray-50 rounded-lg border border-gray-200 h-64 overflow-y-auto p-4">
-                    {historyLoading ? (
-                        <div className="text-center text-gray-400 mt-10">Loading...</div>
-                    ) : historyRecords.length === 0 ? (
-                        <div className="text-center text-gray-400 mt-10">No classes attended on this date.</div>
-                    ) : (
+                    {historyLoading ? <div className="text-center text-gray-400 mt-10">Loading...</div> : historyRecords.length === 0 ? <div className="text-center text-gray-400 mt-10">No classes attended on this date.</div> : (
                         <div className="space-y-3">
                             {historyRecords.map((rec, i) => (
                                 <div key={i} className="bg-white p-3 rounded shadow-sm border border-gray-100 flex justify-between items-center">
-                                    <div>
-                                        <div className="font-bold">{rec.student.full_name}</div>
-                                        <div className="text-xs text-gray-500">{rec.reason}</div>
-                                    </div>
-                                    <div className="text-sm font-mono text-gray-400">
-                                        {new Date(rec.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                                    </div>
+                                    <div><div className="font-bold">{rec.student.full_name}</div><div className="text-xs text-gray-500">{rec.reason}</div></div>
+                                    <div className="text-sm font-mono text-gray-400">{new Date(rec.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
                                 </div>
                             ))}
                         </div>
@@ -322,26 +308,16 @@ const TeacherDashboard = () => {
         </div>
       )}
 
-      {/* --- VISUAL CALENDAR MODAL (Review Schedule) --- */}
+      {/* --- REVIEW MODAL (Calendar) --- */}
       {reviewingStudent && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col p-6 relative">
                 <button onClick={() => setReviewingStudent(null)} className="absolute top-4 right-4 text-gray-400 hover:text-black"><X size={28}/></button>
-                <div className="mb-4">
-                  <h2 className="text-2xl font-bold mb-1">Review Schedule</h2>
-                  <p className="text-gray-500">Applicant: <span className="font-bold text-indigo-600">{reviewingStudent.student.full_name}</span> wants <span className="font-bold">{reviewingStudent.preferred_days.join(", ")} @ {reviewingStudent.preferred_time}</span></p>
-                </div>
+                <div className="mb-4"><h2 className="text-2xl font-bold mb-1">Review Schedule</h2><p className="text-gray-500">Applicant: <span className="font-bold text-indigo-600">{reviewingStudent.student.full_name}</span> wants <span className="font-bold">{reviewingStudent.preferred_days.join(", ")} @ {reviewingStudent.preferred_time}</span></p></div>
                 <div className="overflow-auto border rounded-lg shadow-inner flex-1">
                     <table className="w-full text-xs border-collapse">
                         <thead className="sticky top-0 z-10 shadow-sm">
-                            <tr>
-                                <th className="bg-gray-100 p-2 border border-gray-300 w-16">Time</th>
-                                {daysOfWeek.map(day => (
-                                    <th key={day} className={`p-2 border border-gray-300 w-32 ${reviewingStudent.preferred_days.includes(day) ? 'bg-yellow-100 text-yellow-900 font-bold border-yellow-300' : 'bg-gray-50'}`}>
-                                        {day.slice(0,3)}
-                                    </th>
-                                ))}
-                            </tr>
+                            <tr><th className="bg-gray-100 p-2 border border-gray-300 w-16">Time</th>{daysOfWeek.map(day => (<th key={day} className={`p-2 border border-gray-300 w-32 ${reviewingStudent.preferred_days.includes(day) ? 'bg-yellow-100 text-yellow-900 font-bold border-yellow-300' : 'bg-gray-50'}`}>{day.slice(0,3)}</th>))}</tr>
                         </thead>
                         <tbody>
                             {timeSlots.map(time => (
@@ -353,12 +329,7 @@ const TeacherDashboard = () => {
                                         let cellClass = "bg-white"; let content = null;
                                         if (occupiedBy) { cellClass = isRequested ? "bg-red-500 text-white" : "bg-blue-100 text-blue-800"; content = occupiedBy.student.full_name.split(' ')[0]; } 
                                         else if (isRequested) { cellClass = "bg-green-500 text-white"; content = "REQUESTED"; }
-                                        return (
-                                            <td key={day + time} className={`border border-gray-300 p-1 text-center h-8 relative group ${cellClass}`}>
-                                                <div className="truncate font-bold">{content}</div>
-                                                {occupiedBy && (<div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 bg-black text-white text-xs p-2 rounded z-20 w-max shadow-lg pointer-events-none">{occupiedBy.student.full_name} ({occupiedBy.courses.name})</div>)}
-                                            </td>
-                                        );
+                                        return (<td key={day + time} className={`border border-gray-300 p-1 text-center h-8 relative group ${cellClass}`}><div className="truncate font-bold">{content}</div>{occupiedBy && (<div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 bg-black text-white text-xs p-2 rounded z-20 w-max shadow-lg pointer-events-none">{occupiedBy.student.full_name} ({occupiedBy.courses.name})</div>)}</td>);
                                     })}
                                 </tr>
                             ))}
@@ -366,16 +337,8 @@ const TeacherDashboard = () => {
                     </table>
                 </div>
                 <div className="mt-4 flex flex-col md:flex-row justify-between items-center gap-4 bg-gray-50 p-4 rounded-lg shrink-0">
-                    <div className="text-xs text-gray-600 flex gap-4">
-                        <div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-100 border border-blue-300"></div> Existing</div>
-                        <div className="flex items-center gap-1"><div className="w-3 h-3 bg-green-500"></div> New (Free)</div>
-                        <div className="flex items-center gap-1"><div className="w-3 h-3 bg-red-500"></div> Conflict</div>
-                    </div>
-                    <div className="flex gap-3">
-                         <div className="flex items-center gap-2"><span className="text-sm font-bold">Time:</span><input type="time" value={reviewingStudent.preferred_time} onChange={(e) => setReviewingStudent({...reviewingStudent, preferred_time: e.target.value})} className="border rounded p-1 text-sm bg-white"/></div>
-                         <button onClick={() => window.open(`https://wa.me/${reviewingStudent.student.phone_number}`)} className="bg-green-100 text-green-700 px-3 py-2 rounded font-bold hover:bg-green-200 text-sm">WhatsApp</button>
-                         <button onClick={handleAcceptApplication} className="bg-indigo-600 text-white px-4 py-2 rounded font-bold hover:bg-indigo-700 flex items-center gap-2 text-sm"><CheckCircle size={16} /> Enroll</button>
-                    </div>
+                    <div className="text-xs text-gray-600 flex gap-4"><div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-100 border border-blue-300"></div> Existing</div><div className="flex items-center gap-1"><div className="w-3 h-3 bg-green-500"></div> New (Free)</div><div className="flex items-center gap-1"><div className="w-3 h-3 bg-red-500"></div> Conflict</div></div>
+                    <div className="flex gap-3"><div className="flex items-center gap-2"><span className="text-sm font-bold">Time:</span><input type="time" value={reviewingStudent.preferred_time} onChange={(e) => setReviewingStudent({...reviewingStudent, preferred_time: e.target.value})} className="border rounded p-1 text-sm bg-white"/></div><button onClick={() => window.open(`https://wa.me/${reviewingStudent.student.phone_number}`)} className="bg-green-100 text-green-700 px-3 py-2 rounded font-bold hover:bg-green-200 text-sm">WhatsApp</button><button onClick={handleAcceptApplication} className="bg-indigo-600 text-white px-4 py-2 rounded font-bold hover:bg-indigo-700 flex items-center gap-2 text-sm"><CheckCircle size={16} /> Enroll</button></div>
                 </div>
             </div>
         </div>
