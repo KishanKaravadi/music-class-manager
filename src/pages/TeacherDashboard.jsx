@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
-import { Users, DollarSign, Calendar, CheckCircle, X, Bell, Trash2, History, Check } from 'lucide-react'; // Added Check icon
+import { Users, DollarSign, Calendar, CheckCircle, X, Bell, Trash2, History, Check, XCircle } from 'lucide-react'; // Added XCircle
 
 const TeacherDashboard = () => {
   const [activeRoster, setActiveRoster] = useState([]);
   const [pendingApplications, setPendingApplications] = useState([]);
   const [pendingPayments, setPendingPayments] = useState([]);
   const [paidStudentIds, setPaidStudentIds] = useState([]); 
-  const [attendanceToday, setAttendanceToday] = useState([]); // NEW: Tracks who attended today
+  const [attendanceToday, setAttendanceToday] = useState([]); 
   const [loading, setLoading] = useState(true);
   
   const [reviewingStudent, setReviewingStudent] = useState(null);
@@ -86,24 +86,26 @@ const TeacherDashboard = () => {
     setActiveRoster(fullRoster.filter(r => r.status === 'active'));
     setPendingApplications(fullRoster.filter(r => r.status === 'pending'));
 
-    // 3. Fetch Pending Payments
+    // 3. Fetch Pending Payments (Make sure to get Phone/Email for rejection notices)
     const { data: paymentData } = await supabase
-      .from('payments').select('*, profiles(full_name)').eq('status', 'pending');
+      .from('payments')
+      .select('*, profiles(full_name, phone_number, email)')
+      .eq('status', 'pending');
     setPendingPayments(paymentData || []);
 
-    // 4. Fetch APPROVED Payments for THIS Month
+    // 4. Fetch APPROVED Payments
     const { data: approvedData } = await supabase
       .from('payments').select('student_id').eq('status', 'approved').eq('month_for', currentMonthName);
     setPaidStudentIds(approvedData?.map(p => p.student_id) || []);
 
-    // 5. NEW: Fetch Today's Attendance (To color the buttons)
+    // 5. Fetch Today's Attendance
     const todayStart = new Date(); todayStart.setHours(0,0,0,0);
     const todayEnd = new Date(); todayEnd.setHours(23,59,59,999);
     
     const { data: todayLedger } = await supabase
         .from('credit_ledger')
         .select('student_id')
-        .lt('amount', 0) // Look for deductions
+        .lt('amount', 0)
         .gte('created_at', todayStart.toISOString())
         .lte('created_at', todayEnd.toISOString());
     
@@ -135,27 +137,37 @@ const TeacherDashboard = () => {
     fetchData();
   };
 
-  // --- UPDATED: Mark Present Logic ---
-  const handleMarkPresent = async (studentId, studentName, courseName, currentBalance) => {
-    // 1. Check Credits
-    if (currentBalance <= 0) return alert(`⛔ STOP: ${studentName} has 0 credits remaining.`);
+  // --- RESTORED: Reject Payment Function ---
+  const handleRejectPayment = async (paymentId, studentProfile, amount) => {
+    const confirm = window.confirm("Are you sure you want to REJECT this payment?\n\nThis will notify the student to try again.");
+    if (!confirm) return;
 
-    // 2. Check if already marked today
+    // 1. Update DB to 'rejected'
+    const { error } = await supabase.from('payments').update({ status: 'rejected' }).eq('id', paymentId);
+    if (error) return alert("Error rejecting payment");
+
+    // 2. Prepare Message
+    const message = `Hello ${studentProfile.full_name}, we have NOT received your payment of ₹${amount}. Your transaction has been rejected on the portal. Please check your bank and try paying again.`;
+
+    // 3. Open WhatsApp & Email
+    window.open(`https://wa.me/${studentProfile.phone_number}?text=${encodeURIComponent(message)}`, '_blank');
+    setTimeout(() => {
+        window.open(`mailto:${studentProfile.email}?subject=Payment Rejected&body=${encodeURIComponent(message)}`, '_blank');
+    }, 1000);
+
+    fetchData();
+  };
+  // -----------------------------------------
+
+  const handleMarkPresent = async (studentId, studentName, courseName, currentBalance) => {
+    if (currentBalance <= 0) return alert(`⛔ STOP: ${studentName} has 0 credits remaining.`);
     const alreadyMarked = attendanceToday.includes(studentId);
     let message = `Mark ${studentName} present? (-1 Credit)`;
-    
-    if (alreadyMarked) {
-        message = `⚠️ WARNING: ${studentName} is ALREADY marked present today.\n\nDo you want to mark them present AGAIN? (-1 Credit)`;
-    }
-
-    // 3. Confirm
+    if (alreadyMarked) message = `⚠️ WARNING: ${studentName} is ALREADY marked present today.\n\nDo you want to mark them present AGAIN? (-1 Credit)`;
     if (!window.confirm(message)) return;
-
-    // 4. Execute
     await supabase.from('credit_ledger').insert([{ student_id: studentId, amount: -1, reason: `Attended ${courseName}` }]);
-    fetchData(); // Refreshes the list -> Updates color -> Updates History
+    fetchData();
   };
-  // -----------------------------------
 
   const handleArchiveStudent = async (enrollmentId, studentName) => {
     if (!window.confirm(`Archive ${studentName}?`)) return;
@@ -186,7 +198,6 @@ const TeacherDashboard = () => {
       <div className="max-w-7xl mx-auto">
         <header className="mb-10 flex flex-col md:flex-row justify-between items-center gap-4">
             <h1 className="text-3xl font-bold text-gray-900">Teacher Dashboard</h1>
-            
             <div className="flex gap-2">
                 <button onClick={() => setShowHistory(true)} className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-gray-50 transition-colors">
                     <History size={18} /> History
@@ -216,16 +227,35 @@ const TeacherDashboard = () => {
           </div>
         )}
 
-        {/* 2. PENDING PAYMENTS */}
+        {/* 2. PENDING PAYMENTS (RESTORED REJECT BUTTON) */}
         {pendingPayments.length > 0 && (
           <div className="mb-12">
              <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2"><DollarSign className="text-yellow-600" /> Pending Fees</h2>
              <div className="grid gap-4 md:grid-cols-3">
                {pendingPayments.map(p => (
-                 <div key={p.id} className="bg-white p-5 rounded-xl shadow-sm border border-yellow-200">
-                   <h3 className="font-bold">{p.profiles?.full_name}</h3>
-                   <p className="text-gray-500 text-sm">Paid ₹{p.amount_paid}</p>
-                   <button onClick={() => handleApprovePayment(p.id)} className="mt-4 w-full bg-yellow-500 text-white font-bold py-2 rounded">Approve</button>
+                 <div key={p.id} className="bg-white p-5 rounded-xl shadow-sm border border-yellow-200 flex flex-col justify-between">
+                   <div>
+                       <h3 className="font-bold text-lg">{p.profiles?.full_name}</h3>
+                       <p className="text-gray-500 text-sm mb-4">Reported Paid: ₹{p.amount_paid}</p>
+                   </div>
+                   <div className="flex gap-2">
+                       {/* REJECT */}
+                       <button 
+                         onClick={() => handleRejectPayment(p.id, p.profiles, p.amount_paid)} 
+                         className="flex-1 bg-red-100 text-red-700 font-bold py-2 rounded hover:bg-red-200 flex items-center justify-center gap-1"
+                         title="Reject & Notify"
+                       >
+                         <XCircle size={18} /> Reject
+                       </button>
+
+                       {/* APPROVE */}
+                       <button 
+                         onClick={() => handleApprovePayment(p.id)} 
+                         className="flex-1 bg-green-600 text-white font-bold py-2 rounded hover:bg-green-700 flex items-center justify-center gap-1"
+                       >
+                         <CheckCircle size={18} /> Approve
+                       </button>
+                   </div>
                  </div>
                ))}
              </div>
@@ -241,9 +271,7 @@ const TeacherDashboard = () => {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {activeRoster.map((item) => {
-                // Check if marked present today
                 const isMarkedToday = attendanceToday.includes(item.student.id);
-
                 return (
                     <tr key={item.id} className="hover:bg-gray-50">
                     <td className="p-4">
@@ -256,20 +284,14 @@ const TeacherDashboard = () => {
                     </td>
                     <td className="p-4 font-bold text-indigo-600">{item.current_balance}</td>
                     <td className="p-4 text-right flex justify-end items-center gap-3">
-                        
-                        {/* MARK PRESENT BUTTON (Changes Color/Text if done) */}
                         <button 
                             onClick={() => handleMarkPresent(item.student.id, item.student.full_name, item.courses.name, item.current_balance)} 
                             className={`px-3 py-1 rounded text-sm font-bold flex items-center gap-1 transition-colors ${
-                                isMarkedToday 
-                                ? 'bg-green-100 text-green-700 hover:bg-green-200 border border-green-200' 
-                                : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                                isMarkedToday ? 'bg-green-100 text-green-700 hover:bg-green-200 border border-green-200' : 'bg-indigo-600 text-white hover:bg-indigo-700'
                             }`}
                         >
-                            {isMarkedToday && <Check size={14} strokeWidth={3} />}
-                            {isMarkedToday ? "Done" : "Present"}
+                            {isMarkedToday && <Check size={14} strokeWidth={3} />} {isMarkedToday ? "Done" : "Present"}
                         </button>
-
                         <button onClick={() => handleArchiveStudent(item.id, item.student.full_name)} className="text-gray-400 hover:text-red-600 p-2" title="Archive Student">
                             <Trash2 size={18} />
                         </button>
