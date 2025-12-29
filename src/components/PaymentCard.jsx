@@ -24,6 +24,8 @@ const upiString = `upi://pay?pa=${uncleVPA}&pn=${businessName}&am=${amount}&tn=$
 
   const handlePaymentSent = async () => {
     setLoading(true);
+
+    const currentMonthYear = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
     
     // 1. Log the payment
     const { error } = await supabase
@@ -33,7 +35,7 @@ const upiString = `upi://pay?pa=${uncleVPA}&pn=${businessName}&am=${amount}&tn=$
           student_id: studentId, 
           amount_paid: 1500, 
           status: 'pending', 
-          month_for: new Date().toLocaleString('default', { month: 'long' }) 
+          month_for: currentMonthYear
         }
       ]);
 

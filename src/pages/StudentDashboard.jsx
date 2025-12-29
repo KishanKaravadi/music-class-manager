@@ -10,6 +10,7 @@ const StudentDashboard = ({ session }) => {
   const [loading, setLoading] = useState(true);
   const [hasPendingPayment, setHasPendingPayment] = useState(false);
   const [schedule, setSchedule] = useState(null); // NEW: Schedule State
+  const [hasPaidThisMonth, setHasPaidThisMonth] = useState(false); // Add this state
 
   useEffect(() => {
     fetchCreditData();
@@ -17,6 +18,7 @@ const StudentDashboard = ({ session }) => {
 
   const fetchCreditData = async () => {
     const userId = session.user.id;
+    const currentMonthName = new Date().toLocaleString('default', { month: 'long', year: 'numeric' }); // Include Year for safety
 
     // 1. Fetch Ledger
     const { data: ledgerData } = await supabase
@@ -39,6 +41,15 @@ const StudentDashboard = ({ session }) => {
       .eq('student_id', userId)
       .eq('status', 'active') // Only show if active
       .single();
+    
+    // 3. NEW: Check if they have an APPROVED payment for THIS month
+  const { data: monthlyPayment } = await supabase
+    .from('payments')
+    .select('id')
+    .eq('student_id', userId)
+    .eq('status', 'approved')
+    .eq('month_for', currentMonthName) // Checks "December 2025"
+    .maybeSingle();
 
     if (ledgerData) {
       const currentBalance = ledgerData.reduce((acc, curr) => acc + curr.amount, 0);
@@ -58,10 +69,14 @@ const StudentDashboard = ({ session }) => {
     if (paymentData && paymentData.length > 0) setHasPendingPayment(true);
     if (enrollmentData) setSchedule(enrollmentData);
 
+    setHasPaidThisMonth(!!monthlyPayment);
+
     setLoading(false);
   };
 
   if (loading) return <div className="p-10 text-center text-indigo-600 font-medium">Loading your profile...</div>;
+
+  const isPaymentDue = balance <= 0 || !hasPaidThisMonth;
 
   return (
     <div className="min-h-screen bg-gray-50 p-6 md:p-12">
@@ -111,13 +126,20 @@ const StudentDashboard = ({ session }) => {
           </div>
 
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-             <div className="flex items-center gap-3 mb-2 text-gray-500">
+            <div className="flex items-center gap-3 mb-2 text-gray-500">
               <TrendingUp size={20} className="text-green-600" /> <span className="font-medium">Account Status</span>
             </div>
             <div className="flex items-center gap-2">
-                <div className={`h-3 w-3 rounded-full ${balance > 0 ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                <span className="text-xl font-bold text-gray-900">{balance > 0 ? 'Active' : 'Payment Due'}</span>
+                {/* Green if Active, Red if Payment Due */}
+                <div className={`h-3 w-3 rounded-full ${!isPaymentDue ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                <span className="text-xl font-bold text-gray-900">
+                    {!isPaymentDue ? 'Active' : 'Payment Due'}
+                </span>
             </div>
+            {/* Optional: Add a helper text explaining why */}
+            {isPaymentDue && balance > 0 && (
+                <p className="text-xs text-red-500 mt-1">Month fee pending.</p>
+            )}
           </div>
         </div>
 
@@ -125,22 +147,25 @@ const StudentDashboard = ({ session }) => {
         <div className="grid lg:grid-cols-3 gap-8">
           {/* LEFT: PAYMENT WIDGET */}
           <div className="lg:col-span-1">
-             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                <div className="p-4 bg-gray-50 border-b border-gray-100 font-bold text-gray-700 flex items-center gap-2">
-                    <DollarSign size={18} /> Fee Payment
-                </div>
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                {/* ... Header ... */}
                 <div className="p-6">
-                    {hasPendingPayment ? (
-                        <div className="text-center p-6 bg-yellow-50 border border-yellow-200 rounded-lg">
-                            <Lock className="mx-auto text-yellow-600 mb-3" size={40} />
-                            <h3 className="font-bold text-yellow-800 text-lg">Payment in Review</h3>
-                            <p className="text-sm text-yellow-700 mt-2">Your teacher is verifying your payment.</p>
+                    {hasPaidThisMonth ? (
+                        <div className="text-center p-6 bg-green-50 border border-green-200 rounded-lg">
+                            <CheckCircle className="mx-auto text-green-600 mb-3" size={40} />
+                            <h3 className="font-bold text-green-800 text-lg">Fee Paid</h3>
+                            <p className="text-sm text-green-700 mt-2">
+                                You have paid for {new Date().toLocaleString('default', { month: 'long' })}.
+                            </p>
                         </div>
+                    ) : hasPendingPayment ? (
+                        // ... Pending Logic ...
+                        <div className="text-center p-6 bg-yellow-50 border border-yellow-200 rounded-lg">...</div>
                     ) : (
                         <PaymentCard studentId={session.user.id} studentName={session.user.email} onPaymentSuccess={fetchCreditData} />
                     )}
                 </div>
-             </div>
+            </div>
           </div>
 
           {/* RIGHT: HISTORY TABLE */}
