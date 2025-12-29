@@ -118,24 +118,34 @@ const TeacherDashboard = () => {
     setLoading(false);
   };
 
-  const sendWhatsApp = (student) => {
-  const msg = `Hello ${student.student.full_name}, friendly reminder to pay your Music Class fees for ${new Date().toLocaleString('default', { month: 'long' })}.`;
-  window.open(`https://wa.me/${student.student.phone_number}?text=${encodeURIComponent(msg)}`, '_blank');
-};
+  const handleSendReminder = (index, student) => {
+    // 1. Open WhatsApp
+    const msg = `Hello ${student.student.full_name}, friendly reminder to pay your Music Class fees for ${new Date().toLocaleString('default', { month: 'long' })}.`;
+    window.open(`https://wa.me/${student.student.phone_number}?text=${encodeURIComponent(msg)}`, '_blank');
+
+    // 2. Mark this specific student as 'sent' in the list
+    setReminderTargets(prev => {
+        const newList = [...prev];
+        newList[index] = { ...newList[index], sent: true };
+        return newList;
+    });
+  };
 
   const handleBulkReminders = () => {
-  let targetStudents = activeRoster;
-  
-  // Filter out those with pending payments or who have already paid
-  targetStudents = targetStudents.filter(student => !pendingPayments.some(p => p.student_id === student.student.id));
-  targetStudents = targetStudents.filter(student => !paidStudentIds.includes(student.student.id));
-  
-  if (targetStudents.length === 0) return alert("Everyone is paid up or pending! No reminders needed.");
+    let targetStudents = activeRoster;
+    
+    // Filter out paid or pending
+    targetStudents = targetStudents.filter(student => !pendingPayments.some(p => p.student_id === student.student.id));
+    targetStudents = targetStudents.filter(student => !paidStudentIds.includes(student.student.id));
+    
+    if (targetStudents.length === 0) return alert("Everyone is paid up or pending! No reminders needed.");
 
-  // Instead of looping window.open, show the modal
-  setReminderTargets(targetStudents);
-  setShowReminderModal(true);
-};
+    // Create a clean list with a 'sent' flag for the modal
+    const preparedList = targetStudents.map(s => ({ ...s, sent: false }));
+
+    setReminderTargets(preparedList);
+    setShowReminderModal(true);
+  };
 
   const handleApprovePayment = async (paymentId) => {
     await supabase.from('payments').update({ status: 'approved' }).eq('id', paymentId);
@@ -375,42 +385,40 @@ const TeacherDashboard = () => {
       {/* --- REMINDERS MODAL --- */}
       {showReminderModal && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 relative">
-            <button onClick={() => setShowReminderModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-black">
-              <X size={28}/>
-            </button>
-            
-            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
-              <Bell className="text-orange-600"/> Send Reminders
-            </h2>
-            
-            <p className="text-gray-600 mb-4">
-              Found <b>{reminderTargets.length}</b> students with unpaid fees. Click "Send" to open WhatsApp for each.
-            </p>
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 relative">
+                <button onClick={() => setShowReminderModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-black"><X size={28}/></button>
+                <h2 className="text-2xl font-bold mb-4 flex items-center gap-2"><Bell className="text-orange-600"/> Send Reminders</h2>
+                <p className="text-gray-600 mb-4">Found <b>{reminderTargets.length}</b> students with unpaid fees.</p>
 
-            <div className="bg-gray-50 rounded-lg border border-gray-200 max-h-96 overflow-y-auto p-2">
-              {reminderTargets.map((student) => (
-                <div key={student.id} className="flex justify-between items-center bg-white p-3 mb-2 rounded border border-gray-100 shadow-sm">
-                  <div>
-                    <div className="font-bold">{student.student.full_name}</div>
-                    <div className="text-xs text-gray-500">{student.student.phone_number}</div>
-                  </div>
-                  <button 
-                    onClick={() => sendWhatsApp(student)}
-                    className="bg-green-500 text-white text-sm font-bold px-3 py-2 rounded hover:bg-green-600 flex items-center gap-1"
-                  >
-                    Send <CheckCircle size={14} />
-                  </button>
+                <div className="bg-gray-50 rounded-lg border border-gray-200 max-h-96 overflow-y-auto p-2">
+                    {reminderTargets.map((student, index) => (
+                        <div key={student.id} className="flex justify-between items-center bg-white p-3 mb-2 rounded border border-gray-100 shadow-sm">
+                            <div>
+                                <div className="font-bold">{student.student.full_name}</div>
+                                <div className="text-xs text-gray-500">{student.student.phone_number}</div>
+                            </div>
+                            
+                            {/* THE SMART BUTTON */}
+                            {student.sent ? (
+                                <button disabled className="bg-gray-200 text-gray-500 text-sm font-bold px-4 py-2 rounded flex items-center gap-1 cursor-not-allowed">
+                                    Done <CheckCircle size={14} />
+                                </button>
+                            ) : (
+                                <button 
+                                    onClick={() => handleSendReminder(index, student)} 
+                                    className="bg-green-500 text-white text-sm font-bold px-4 py-2 rounded hover:bg-green-600 flex items-center gap-1 shadow-sm transition-all"
+                                >
+                                    Send <Bell size={14} />
+                                </button>
+                            )}
+                        </div>
+                    ))}
                 </div>
-              ))}
+                
+                <div className="mt-4 text-right">
+                    <button onClick={() => setShowReminderModal(false)} className="text-gray-500 font-bold hover:text-gray-800">Close</button>
+                </div>
             </div>
-            
-            <div className="mt-4 text-right">
-              <button onClick={() => setShowReminderModal(false)} className="text-gray-500 font-bold hover:text-gray-800">
-                Close
-              </button>
-            </div>
-          </div>
         </div>
       )}
     </div>
