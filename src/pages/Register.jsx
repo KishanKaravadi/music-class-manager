@@ -20,8 +20,7 @@ const Register = () => {
 
   const courseDetails = {
     western: {
-      duration: "Grade 1 to Grade 8",
-      details: "To complete each grade, takes at least 6 to 8 months.",
+      duration: "Initial Grade to Grade 8",
     },
     carnatic_standard: {
       duration: "4 Years Course",
@@ -30,7 +29,7 @@ const Register = () => {
         "1st Year: Sarali Swaras, Janta Swaras, Alankaras, Geethams, Swarajathis, Swarapallavi",
         "2nd Year: Varnams / Krithis - Part 1",
         "3rd Year: Varnams / Krithis - Part 2",
-        "4th Year: Varnams / Krithis - Part 2, Krithis, Ragaalapana, Swarakalpana, Thillana"
+        "4th Year: Varnams / Krithis - Part 2, Krithis , Tillanas and Manodharma sangeetham"
       ],
       exams: "Exams: (i) Certificate Course (ii) Sangeetha Visarada"
     },

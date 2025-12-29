@@ -76,7 +76,7 @@ function App() {
     <Router>
       <div className="min-h-screen bg-gray-50 text-gray-900 font-sans">
         <nav className="bg-white shadow p-4 mb-8 flex justify-between">
-          <div className="font-bold text-xl">🎹 Uncle's Music School</div>
+          <div className="font-bold text-xl">🎹 Deeksha and Harshini's Music School</div>
           {session ? (
             <button onClick={handleLogout} className="text-red-600 hover:underline">Logout</button>
           ) : (
