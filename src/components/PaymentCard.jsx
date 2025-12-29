@@ -3,38 +3,31 @@ import QRCode from 'react-qr-code';
 import { supabase } from '../supabaseClient';
 import { CheckCircle, Loader } from 'lucide-react';
 
-// NEW: Accept 'onPaymentSuccess' as a prop
 const PaymentCard = ({ studentId, studentName, onPaymentSuccess }) => {
   const [showQR, setShowQR] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // Inside PaymentCard.jsx
+  // Read UPI ID from Env (or default)
+  const uncleVPA = import.meta.env.VITE_UPI_ID || "replace_me@upi"; 
+  
+  const businessName = "MusicClass"; 
+  const note = `Fee-${studentName}`;
 
-
-// 2. (Optional) Change the Business Name displayed in the app when they scan
-const businessName = "KeynoteMusicAcademy"; 
-const uncleVPA = import.meta.env.VITE_UPI_ID || "replace_me@upi";
-
-const amount = "1500";
-const note = `Fee-${studentName}`;
-
-// This line builds the link that the QR code uses
-const upiString = `upi://pay?pa=${uncleVPA}&pn=${businessName}&am=${amount}&tn=${note}`;
+  // UPDATED: Removed '&am=' so the user enters the amount themselves
+  const upiString = `upi://pay?pa=${uncleVPA}&pn=${businessName}&tn=${note}`;
 
   const handlePaymentSent = async () => {
     setLoading(true);
-
     const currentMonthYear = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
-    
-    // 1. Log the payment
+
     const { error } = await supabase
       .from('payments')
       .insert([
         { 
           student_id: studentId, 
-          amount_paid: 1500, 
+          amount_paid: 0, // We just track THAT they paid, not how much
           status: 'pending', 
-          month_for: currentMonthYear
+          month_for: currentMonthYear 
         }
       ]);
 
@@ -42,11 +35,7 @@ const upiString = `upi://pay?pa=${uncleVPA}&pn=${businessName}&am=${amount}&tn=$
       alert('Error logging payment: ' + error.message);
     } else {
       alert('Payment recorded! Waiting for approval.');
-      
-      // 2. CRITICAL FIX: Tell the parent component to lock the screen
-      if (onPaymentSuccess) {
-        onPaymentSuccess();
-      }
+      if (onPaymentSuccess) onPaymentSuccess();
     }
     
     setLoading(false);
@@ -57,12 +46,12 @@ const upiString = `upi://pay?pa=${uncleVPA}&pn=${businessName}&am=${amount}&tn=$
     <div className="text-center">
       {!showQR ? (
         <>
-          <p className="text-gray-500 mb-4">Scan QR to pay via PhonePe/GPay</p>
+          <p className="text-gray-500 mb-4">Scan QR to pay fees</p>
           <button 
             onClick={() => setShowQR(true)}
             className="w-full bg-indigo-600 text-white font-bold py-3 rounded-lg hover:bg-indigo-700 transition-colors"
           >
-            Pay ₹1500 Now
+            Pay Fees via UPI
           </button>
         </>
       ) : (
@@ -71,9 +60,9 @@ const upiString = `upi://pay?pa=${uncleVPA}&pn=${businessName}&am=${amount}&tn=$
             <QRCode value={upiString} size={160} />
           </div>
           <p className="text-sm text-gray-500 mb-4 px-4">
-            1. Scan this code with any UPI app.<br/>
-            2. Complete the payment.<br/>
-            3. Click the button below to confirm.
+            1. Scan with GPay/PhonePe.<br/>
+            2. Enter the agreed amount.<br/>
+            3. Click the button below.
           </p>
           
           <div className="flex gap-2 w-full">

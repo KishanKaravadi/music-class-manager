@@ -2,24 +2,21 @@ import React, { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { 
   Users, DollarSign, Calendar, CheckCircle, X, Bell, 
-  History, MessageCircle, User, Search, LayoutDashboard, CreditCard, UserPlus
+  History, MessageCircle, User, Search, LayoutDashboard, CreditCard, UserPlus, Music
 } from 'lucide-react';
 
 const TeacherDashboard = () => {
-  // Data State
   const [activeRoster, setActiveRoster] = useState([]);
   const [pendingApplications, setPendingApplications] = useState([]);
   const [pendingPayments, setPendingPayments] = useState([]);
   const [paidStudentIds, setPaidStudentIds] = useState([]); 
-  const [attendanceToday, setAttendanceToday] = useState([]); 
+  const [attendanceRecordsToday, setAttendanceRecordsToday] = useState([]); 
   const [studentBalances, setStudentBalances] = useState({}); 
   const [loading, setLoading] = useState(true);
   
-  // UI State
   const [activeTab, setActiveTab] = useState('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
   
-  // Modal State
   const [reviewingStudent, setReviewingStudent] = useState(null);
   const [viewingStudent, setViewingStudent] = useState(null);
   const [reminderTargets, setReminderTargets] = useState([]);
@@ -68,9 +65,7 @@ const TeacherDashboard = () => {
     return "Carnatic";
   };
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  useEffect(() => { fetchData(); }, []);
 
   const fetchData = async () => {
     setLoading(true);
@@ -89,8 +84,12 @@ const TeacherDashboard = () => {
     const { data: paid } = await supabase.from('payments').select('student_id').eq('status', 'approved').eq('month_for', currentMonthName);
     if (paid) setPaidStudentIds(paid.map(p => p.student_id));
 
-    const { data: attendance } = await supabase.from('credit_ledger').select('student_id').eq('reason', 'Class Attended').gte('created_at', `${todayStr}T00:00:00`).lte('created_at', `${todayStr}T23:59:59`);
-    if (attendance) setAttendanceToday(attendance.map(a => a.student_id));
+    const { data: attendance } = await supabase.from('credit_ledger')
+        .select('student_id, reason')
+        .gte('created_at', `${todayStr}T00:00:00`)
+        .lte('created_at', `${todayStr}T23:59:59`);
+        
+    if (attendance) setAttendanceRecordsToday(attendance);
 
     const { data: allLedger } = await supabase.from('credit_ledger').select('student_id, amount');
     if (allLedger) {
@@ -107,27 +106,34 @@ const TeacherDashboard = () => {
 
   // --- ACTIONS ---
   
-  // FIX: Removed manual credit insertion. Database trigger will handle it.
-  const handleApprovePayment = async (paymentId) => {
+  const handleApprovePayment = async (paymentId, studentId) => {
     const { error: paymentError } = await supabase.from('payments').update({ status: 'approved' }).eq('id', paymentId);
     if (paymentError) return alert("Error approving payment");
 
-    alert("Payment Approved!"); // Credits added by Trigger
+    const activeCourseCount = activeRoster.filter(r => r.student_id === studentId).length;
+    const creditsNeeded = activeCourseCount * 12;
+    const creditsFromTrigger = 12; 
+    const creditsToManualAdd = Math.max(0, creditsNeeded - creditsFromTrigger);
+
+    if (creditsToManualAdd > 0) {
+         await supabase.from('credit_ledger').insert([{ 
+             student_id: studentId, 
+             amount: creditsToManualAdd, 
+             reason: 'Bonus Credits (Multi-Instrument)' 
+         }]);
+    }
+    alert("Payment Approved!");
     fetchData();
   };
 
   const handleRejectPayment = async (paymentId) => {
-    if(!window.confirm("Are you sure you want to reject this payment record?")) return;
+    if(!window.confirm("Reject this payment?")) return;
     const { error } = await supabase.from('payments').delete().eq('id', paymentId);
-    if (error) alert("Error rejecting payment");
-    else {
-        alert("Payment record removed.");
-        fetchData();
-    }
+    if (!error) { alert("Deleted."); fetchData(); }
   };
 
   const handleRejectApplication = async (id) => {
-    if(window.confirm("Reject this application?")) {
+    if(window.confirm("Reject application?")) {
         await supabase.from('enrollments').delete().eq('id', id);
         fetchData();
     }
@@ -143,33 +149,39 @@ const TeacherDashboard = () => {
 
   const handleAcceptApplication = async () => {
     if (!reviewingStudent) return;
-    if (reviewingStudent.preferred_days.length < 2) return alert("Error: A student must have at least 2 days selected.");
+    if (reviewingStudent.preferred_days.length < 2) return alert("Select at least 2 days.");
 
     const { error } = await supabase.from('enrollments')
         .update({ status: 'active', preferred_time: reviewingStudent.preferred_time, preferred_days: reviewingStudent.preferred_days })
         .eq('id', reviewingStudent.id);
 
     if (!error) {
-        alert("Enrolled Successfully!");
+        alert("Enrolled!");
         setReviewingStudent(null);
         fetchData();
     }
   };
 
   const handleMarkAttendance = async (enrollment) => {
-    if (attendanceToday.includes(enrollment.student_id)) return alert("Already marked present today.");
+    const courseName = enrollment.courses?.name || "Unknown";
+    const alreadyMarked = attendanceRecordsToday.some(r => r.student_id === enrollment.student_id && r.reason.includes(courseName));
+    if (alreadyMarked) return alert(`Already marked present for ${courseName} today.`);
     
     const currentBalance = studentBalances[enrollment.student_id] || 0;
-
     if (currentBalance <= 0) {
-        if (!window.confirm(`Student has ${currentBalance} credits. Mark anyway?`)) return;
+        if (!window.confirm(`Balance is ${currentBalance}. Mark anyway?`)) return;
     }
 
-    const { error } = await supabase.from('credit_ledger').insert([{ student_id: enrollment.student_id, amount: -1, reason: 'Class Attended' }]);
+    const { error } = await supabase.from('credit_ledger').insert([{ 
+        student_id: enrollment.student_id, 
+        amount: -1, 
+        reason: `Class Attended: ${courseName}` 
+    }]);
+
     if (!error) {
-        setAttendanceToday([...attendanceToday, enrollment.student_id]);
+        setAttendanceRecordsToday([...attendanceRecordsToday, { student_id: enrollment.student_id, reason: `Class Attended: ${courseName}` }]);
         setStudentBalances(prev => ({...prev, [enrollment.student_id]: (prev[enrollment.student_id] || 0) - 1}));
-        alert("Marked Present! (-1 Credit)");
+        alert(`Marked Present for ${courseName}!`);
     }
   };
 
@@ -178,13 +190,23 @@ const TeacherDashboard = () => {
     let targetStudents = activeRoster;
     targetStudents = targetStudents.filter(student => !pendingPayments.some(p => p.student_id === student.student.id));
     targetStudents = targetStudents.filter(student => !paidStudentIds.includes(student.student.id));
-    if (targetStudents.length === 0) return alert("Everyone is paid up or pending! No reminders needed.");
-    setReminderTargets(targetStudents.map(s => ({ ...s, sent: false })));
+    
+    const uniqueStudents = [];
+    const seenIds = new Set();
+    targetStudents.forEach(s => {
+        if(!seenIds.has(s.student_id)) {
+            uniqueStudents.push(s);
+            seenIds.add(s.student_id);
+        }
+    });
+
+    if (uniqueStudents.length === 0) return alert("No reminders needed.");
+    setReminderTargets(uniqueStudents.map(s => ({ ...s, sent: false })));
     setShowReminderModal(true);
   };
 
   const handleSendReminder = (index, student) => {
-    const msg = `Hello ${student.student.full_name}, friendly reminder to pay your Music Class fees for ${new Date().toLocaleString('default', { month: 'long' })}.`;
+    const msg = `Hello ${student.student.full_name}, friendly reminder to pay your Music Class fees.`;
     window.open(`https://wa.me/${student.student.phone_number}?text=${encodeURIComponent(msg)}`, '_blank');
     setReminderTargets(prev => {
         const newList = [...prev];
@@ -198,22 +220,22 @@ const TeacherDashboard = () => {
     const end = `${historyDate}T23:59:59`;
     const { data } = await supabase.from('credit_ledger')
         .select('*, student:profiles(full_name)')
-        .eq('reason', 'Class Attended').gte('created_at', start).lte('created_at', end);
+        .lt('amount', 0)
+        .gte('created_at', start).lte('created_at', end)
+        .order('created_at', { ascending: false });
+        
     setHistoryRecords(data || []);
   };
   useEffect(() => { if (showHistory) fetchHistory(); }, [historyDate, showHistory]);
 
-
   // --- VIEW HELPERS ---
   const todaysStudents = activeRoster.filter(s => s.preferred_days.includes(todayName));
-  
   const filteredDirectory = activeRoster.filter(s => {
     const q = searchQuery.toLowerCase();
     const nameMatch = s.student.full_name.toLowerCase().includes(q);
     const courseMatch = s.courses.name.toLowerCase().includes(q);
     const categoryMatch = getCourseCategory(s.courses.id).toLowerCase().includes(q);
     const dayMatch = s.preferred_days.some(d => d.toLowerCase().includes(q));
-    
     return nameMatch || courseMatch || categoryMatch || dayMatch;
   });
 
@@ -300,9 +322,8 @@ const TeacherDashboard = () => {
                                         {todaysStudents
                                             .sort((a,b) => a.preferred_time.localeCompare(b.preferred_time))
                                             .map(student => {
-                                            const isPresent = attendanceToday.includes(student.student_id);
+                                            const isPresent = attendanceRecordsToday.some(r => r.student_id === student.student_id && r.reason.includes(student.courses.name));
                                             const balance = studentBalances[student.student_id] || 0;
-                                            
                                             return (
                                                 <tr key={student.id} className="hover:bg-gray-50 transition-colors">
                                                     <td className="p-4 font-mono font-bold text-indigo-600">{student.preferred_time}</td>
@@ -405,11 +426,11 @@ const TeacherDashboard = () => {
                                 <div key={p.id} className="p-6 flex items-center justify-between hover:bg-gray-50">
                                     <div>
                                         <div className="font-bold text-lg text-gray-900">{p.student?.full_name}</div>
-                                        <div className="text-sm text-gray-500">Paid ₹{p.amount_paid} for {p.month_for}</div>
+                                        <div className="text-sm text-gray-500">Fee Payment Submitted for {p.month_for}</div>
                                         <div className="text-xs text-gray-400 mt-1">Ref: {String(p.id)}</div>
                                     </div>
                                     <div className="flex gap-3">
-                                        <button onClick={() => handleApprovePayment(p.id)} className="bg-green-100 hover:bg-green-200 text-green-700 px-4 py-2 rounded-lg font-bold flex items-center gap-2">
+                                        <button onClick={() => handleApprovePayment(p.id, p.student_id)} className="bg-green-100 hover:bg-green-200 text-green-700 px-4 py-2 rounded-lg font-bold flex items-center gap-2">
                                             <CheckCircle size={18}/> Approve
                                         </button>
                                         <button onClick={() => handleRejectPayment(p.id)} className="bg-red-100 hover:bg-red-200 text-red-700 px-4 py-2 rounded-lg font-bold">
@@ -513,7 +534,9 @@ const TeacherDashboard = () => {
                          ))}
                     </div>
                     <div className="flex gap-2">
-                        <input type="time" value={reviewingStudent.preferred_time} onChange={(e) => setReviewingStudent({...reviewingStudent, preferred_time: e.target.value})} className="border rounded px-2"/>
+                        <select value={reviewingStudent.preferred_time} onChange={(e) => setReviewingStudent({...reviewingStudent, preferred_time: e.target.value})} className="border rounded px-4 py-2 font-bold bg-white text-gray-800">
+                            {timeSlots.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
                         <button onClick={handleAcceptApplication} className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold">Enroll</button>
                     </div>
                 </div>
@@ -528,7 +551,19 @@ const TeacherDashboard = () => {
                 <div className="flex justify-between items-center mb-4"><h2 className="text-xl font-bold">History</h2><button onClick={() => setShowHistory(false)}><X/></button></div>
                 <input type="date" value={historyDate} onChange={(e) => setHistoryDate(e.target.value)} className="w-full border p-2 rounded mb-4"/>
                 <div className="max-h-64 overflow-y-auto space-y-2">
-                    {historyRecords.map(r => <div key={r.id} className="p-3 bg-gray-50 border-l-4 border-indigo-500 flex justify-between"><span className="font-bold">{r.student.full_name}</span><span>{new Date(r.created_at).toLocaleTimeString()}</span></div>)}
+                    {historyRecords.map(r => {
+                        const parts = r.reason.split(':');
+                        const instrument = parts[1] ? parts[1].trim() : null;
+                        return (
+                            <div key={r.id} className="p-3 bg-gray-50 border-l-4 border-indigo-500 flex justify-between items-center">
+                                <div>
+                                    <span className="font-bold block">{r.student.full_name}</span>
+                                    {instrument && <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full uppercase">{instrument}</span>}
+                                </div>
+                                <span className="text-sm text-gray-500">{new Date(r.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                            </div>
+                        )
+                    })}
                 </div>
             </div>
         </div>
@@ -552,7 +587,7 @@ const TeacherDashboard = () => {
         </div>
       )}
 
-      {/* 4. Student Profile Modal (UPDATED WITH CREDITS) */}
+      {/* 4. Student Profile Modal */}
       {viewingStudent && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 animate-in fade-in">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden relative">
@@ -562,18 +597,22 @@ const TeacherDashboard = () => {
                     <div className="w-16 h-16 bg-white text-indigo-600 rounded-full flex items-center justify-center font-bold text-2xl shadow-inner">{viewingStudent.student.full_name.charAt(0)}</div>
                     <div>
                         <h2 className="text-2xl font-bold">{viewingStudent.student.full_name}</h2>
-                        <p className="text-indigo-100 text-sm flex items-center gap-1"><User size={14}/> Student Profile</p>
+                        {/* NEW: Updated Header to show Course Count */}
+                        <div className="flex items-center gap-2 mt-1">
+                            <p className="text-indigo-100 text-sm flex items-center gap-1"><User size={14}/> Student Profile</p>
+                            <span className="bg-white/20 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">
+                                {activeRoster.filter(r => r.student_id === viewingStudent.student_id).length} Active Courses
+                            </span>
+                        </div>
                     </div>
                 </div>
             </div>
             <div className="p-6 space-y-4">
-                {/* NEW: Credit Balance Card */}
                 <div className={`${(studentBalances[viewingStudent.student_id] || 0) <= 0 ? 'bg-red-50 border-red-200 text-red-800' : 'bg-green-50 border-green-200 text-green-800'} p-4 rounded-xl border flex justify-between items-center`}>
                     <div>
                         <div className="text-xs uppercase font-bold opacity-70">Current Balance</div>
                         <div className="text-2xl font-bold">{studentBalances[viewingStudent.student_id] || 0} Credits</div>
                     </div>
-                    {/* Status Dot */}
                     <div className={`w-4 h-4 rounded-full ${(studentBalances[viewingStudent.student_id] || 0) <= 0 ? 'bg-red-500' : 'bg-green-500'}`}></div>
                 </div>
 
@@ -603,14 +642,14 @@ const TeacherDashboard = () => {
                 <div className="pt-2 flex flex-col gap-3">
                     <button 
                         onClick={() => handleMarkAttendance(viewingStudent)}
-                        disabled={attendanceToday.includes(viewingStudent.student_id)}
+                        disabled={attendanceRecordsToday.some(r => r.student_id === viewingStudent.student_id && r.reason.includes(viewingStudent.courses.name))}
                         className={`w-full py-3 rounded-xl flex items-center justify-center gap-2 font-bold transition-colors shadow-sm
-                            ${attendanceToday.includes(viewingStudent.student_id) 
+                            ${attendanceRecordsToday.some(r => r.student_id === viewingStudent.student_id && r.reason.includes(viewingStudent.courses.name)) 
                                 ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
                                 : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}
                     >
                         <CheckCircle size={18}/> 
-                        {attendanceToday.includes(viewingStudent.student_id) ? 'Marked Present Today' : 'Mark Present (-1 Credit)'}
+                        {attendanceRecordsToday.some(r => r.student_id === viewingStudent.student_id && r.reason.includes(viewingStudent.courses.name)) ? 'Marked Present Today' : 'Mark Present (-1 Credit)'}
                     </button>
 
                     <button onClick={() => window.open(`https://wa.me/${viewingStudent.student.phone_number}`, '_blank')} className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-colors shadow-sm">
