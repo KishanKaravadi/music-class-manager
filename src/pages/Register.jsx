@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { useNavigate, Link } from 'react-router-dom';
-import { User, Music, Lock, CheckCircle, Clock, Info } from 'lucide-react'; // Added Info icon
+import { User, Music, Lock, CheckCircle, Clock, Info } from 'lucide-react';
 
 const Register = () => {
   const navigate = useNavigate();
@@ -16,15 +16,12 @@ const Register = () => {
 
   const daysOptions = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-  // --- NEW: Syllabus Data from your Image ---
+  // --- Course Data ---
   const courseDetails = {
-    // Western Instruments (No structure list, just duration)
     western: {
       duration: "Grade 1 to Grade 8",
       details: "To complete each grade, takes at least 6 to 8 months.",
-      // structure: removed as requested
     },
-    // Carnatic Vocal, Violin, Veena (Added Exams)
     carnatic_standard: {
       duration: "4 Years Course",
       details: "Comprehensive training from basics to advanced compositions.",
@@ -34,9 +31,8 @@ const Register = () => {
         "3rd Year: Varnams / Krithis - Part 2",
         "4th Year: Varnams / Krithis - Part 2, Krithis, Ragaalapana, Swarakalpana, Thillana"
       ],
-      exams: "Exams: (i) Certificate Course (ii) Sangeetha Visarada" // Added from image
+      exams: "Exams: (i) Certificate Course (ii) Sangeetha Visarada"
     },
-    // Carnatic Keyboard
     carnatic_keyboard: {
       duration: "18 Months Total",
       details: "Structured curriculum specifically for Carnatic on Keyboard.",
@@ -51,13 +47,9 @@ const Register = () => {
     }
   };
 
-  // Helper to pick the right data based on ID
   const getCurrentCourseInfo = (id) => {
-    // IDs: 1=Piano, 4=Guitar, 6=West Key
     if (['1', '4', '6'].includes(id)) return courseDetails.western;
-    // IDs: 7=Carnatic Key
     if (id === '7') return courseDetails.carnatic_keyboard;
-    // IDs: 2=Violin, 3=Vocal, 5=Veena
     return courseDetails.carnatic_standard;
   };
 
@@ -90,30 +82,30 @@ const Register = () => {
 
   const handleDayChange = (day) => {
     const currentDays = formData.preferredDays;
+    
+    // If clicking a day that is ALREADY selected -> Remove it
     if (currentDays.includes(day)) {
       setFormData({ ...formData, preferredDays: currentDays.filter(d => d !== day) });
     } else {
-      setFormData({ ...formData, preferredDays: [...currentDays, day] });
+      // If clicking a new day, only allow if less than 3 are selected
+      if (currentDays.length < 3) {
+        setFormData({ ...formData, preferredDays: [...currentDays, day] });
+      }
     }
   };
 
   const handleRegister = async (e) => {
     e.preventDefault();
 
-    // --- 1. STRICT VALIDATION: Check Days Count ---
+    // Validation
     const dayCount = formData.preferredDays.length;
-    if (dayCount < 2) {
-        return alert("Please select at least 2 days.");
-    }
-    if (dayCount > 3) {
-        return alert("You can only select a maximum of 3 days.");
-    }
+    if (dayCount < 2) return alert("Please select at least 2 days.");
     
-    if (formData.preferredDays.length < 2 || formData.preferredDays.length > 3) {
-        return alert("Please select exactly 2 or 3 days for your classes.");
-    }
+    // (The >3 check is now handled by UI blocking, but good to keep as safety)
+    if (dayCount > 3) return alert("Maximum 3 days allowed.");
 
     if (!formData.demoAgreed) return alert("Please agree to the Demo Class policy.");
+    
     setLoading(true);
     
     const { data: authData, error: authError } = await supabase.auth.signUp({
@@ -134,10 +126,7 @@ const Register = () => {
       preferred_time: formData.preferredTime,
       joining_date: new Date(), 
       demo_agreed: formData.demoAgreed,
-      
-      // --- UPDATE THIS LINE ---
       status: 'pending' 
-      // -----------------------
     }]);
 
     if (enrollError) { alert(enrollError.message); setLoading(false); return; }
@@ -167,10 +156,10 @@ const Register = () => {
                 <User size={16} /> Personal Details
               </h3>
               <div className="space-y-4">
-                <input name="fullName" placeholder="Student Full Name" onChange={handleChange} className="w-full px-4 py-3 rounded-lg border border-gray-200 outline-none" required />
+                <input name="fullName" placeholder="Student Full Name" onChange={handleChange} className="w-full px-4 py-3 rounded-lg border border-gray-200 outline-none focus:border-indigo-500 transition-colors" required />
                 <div className="flex gap-4">
-                  <input name="age" type="number" placeholder="Age" onChange={handleChange} className="w-1/3 px-4 py-3 rounded-lg border border-gray-200 outline-none" required />
-                  <input name="phone" placeholder="Phone Number" onChange={handleChange} className="w-2/3 px-4 py-3 rounded-lg border border-gray-200 outline-none" required />
+                  <input name="age" type="number" placeholder="Age" onChange={handleChange} className="w-1/3 px-4 py-3 rounded-lg border border-gray-200 outline-none focus:border-indigo-500 transition-colors" required />
+                  <input name="phone" placeholder="Phone Number" onChange={handleChange} className="w-2/3 px-4 py-3 rounded-lg border border-gray-200 outline-none focus:border-indigo-500 transition-colors" required />
                 </div>
               </div>
             </div>
@@ -182,7 +171,7 @@ const Register = () => {
               </h3>
               
               <label className="block text-sm font-medium text-gray-600 mb-1">Select Instrument</label>
-              <select name="courseId" onChange={handleChange} className="w-full px-4 py-3 rounded-lg border border-gray-200 mb-4 outline-none bg-white focus:ring-2 focus:ring-indigo-100">
+              <select name="courseId" onChange={handleChange} className="w-full px-4 py-3 rounded-lg border border-gray-200 mb-4 outline-none bg-white focus:border-indigo-500 transition-colors">
                 <optgroup label="Western">
                     <option value="1">Piano</option>
                     <option value="4">Guitar</option>
@@ -196,26 +185,18 @@ const Register = () => {
                 </optgroup>
               </select>
 
-              {/* --- NEW: DYNAMIC INFO CARD --- */}
+              {/* Dynamic Info Card (Unchanged) */}
               <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
                 <div className="flex items-start gap-3">
                   <Info className="text-blue-600 mt-1 shrink-0" size={20} />
                   <div>
-                    <h4 className="font-bold text-blue-800 text-sm uppercase mb-1">
-                       Course Duration: {currentInfo.duration}
-                    </h4>
+                    <h4 className="font-bold text-blue-800 text-sm uppercase mb-1">Course Duration: {currentInfo.duration}</h4>
                     <p className="text-blue-700 text-sm mb-2">{currentInfo.details}</p>
-                    
-                    {/* Only render structure list if it exists (Carnatic only) */}
                     {currentInfo.structure && (
                         <ul className="text-xs text-blue-600 space-y-1 list-disc pl-4 mb-2">
-                        {currentInfo.structure.map((line, idx) => (
-                            <li key={idx}>{line}</li>
-                        ))}
+                        {currentInfo.structure.map((line, idx) => <li key={idx}>{line}</li>)}
                         </ul>
                     )}
-
-                    {/* Only render Exams if they exist (Carnatic Standard only) */}
                     {currentInfo.exams && (
                         <p className="text-xs font-bold text-blue-800 mt-2 border-t border-blue-200 pt-2">
                             Name of examinations: {currentInfo.exams}
@@ -224,29 +205,65 @@ const Register = () => {
                   </div>
                 </div>
               </div>
-              {/* ----------------------------- */}
 
-              <label className="block text-sm font-medium text-gray-600 mb-1">Preferred Time Slot</label>
-              <div className="relative mb-4">
-                  <Clock className="absolute left-3 top-3 text-gray-400" size={18}/>
-                  <select name="preferredTime" onChange={handleChange} className="w-full pl-10 px-4 py-3 rounded-lg border border-gray-200 outline-none bg-white appearance-none">
-                    {timeSlots.map(time => (
-                        <option key={time} value={time}>{formatTime(time)} (1 Hour Session)</option>
-                    ))}
-                  </select>
+              {/* --- UPDATED: DAY SELECTION (Gray out after 3) --- */}
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-600 mb-2">
+                    Preferred Days <span className="text-xs text-gray-400 font-normal">(Select 2 or 3)</span>
+                </label>
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                    {daysOptions.map(day => {
+                        const isSelected = formData.preferredDays.includes(day);
+                        // Disable if 3 are picked AND this specific button is not one of them
+                        const isDisabled = formData.preferredDays.length >= 3 && !isSelected;
+
+                        return (
+                            <button
+                                key={day}
+                                type="button"
+                                onClick={() => !isDisabled && handleDayChange(day)}
+                                disabled={isDisabled}
+                                className={`
+                                    text-sm py-2 px-1 text-center rounded border transition-all
+                                    ${isSelected 
+                                        ? 'bg-indigo-600 text-white border-indigo-600 font-bold shadow-md transform scale-105' 
+                                        : isDisabled
+                                            ? 'bg-gray-100 text-gray-300 border-gray-100 cursor-not-allowed'
+                                            : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300 hover:text-indigo-600 cursor-pointer'
+                                    }
+                                `}
+                            >
+                                {day.slice(0, 3)}
+                            </button>
+                        );
+                    })}
+                </div>
               </div>
-              
-              <label className="block text-sm font-medium text-gray-600 mb-2">Preferred Days</label>
-              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                {daysOptions.map(day => (
-                  <div key={day} onClick={() => handleDayChange(day)}
-                    className={`cursor-pointer text-sm py-2 px-1 text-center rounded border transition-all ${
-                      formData.preferredDays.includes(day) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'
-                    }`}
-                  >
-                    {day.slice(0, 3)}
-                  </div>
-                ))}
+
+              {/* --- UPDATED: TIME SLOT GRID (Replaced Select) --- */}
+              <div>
+                <label className="block text-sm font-medium text-gray-600 mb-2">Preferred Time Slot (1 Hour)</label>
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-60 overflow-y-auto pr-1">
+                    {timeSlots.map(time => {
+                        const isSelected = formData.preferredTime === time;
+                        return (
+                            <button
+                                key={time}
+                                type="button"
+                                onClick={() => setFormData({ ...formData, preferredTime: time })}
+                                className={`
+                                    text-xs py-2 rounded border transition-all
+                                    ${isSelected 
+                                        ? 'bg-indigo-600 text-white border-indigo-600 font-bold shadow-md' 
+                                        : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300 hover:bg-indigo-50'
+                                    }
+                                `}
+                            >
+                                {formatTime(time)}
+                            </button>
+                        );
+                    })}
+                </div>
               </div>
             </div>
 
@@ -256,19 +273,19 @@ const Register = () => {
                 <Lock size={16} /> Login Credentials
               </h3>
               <div className="space-y-4">
-                <input name="email" type="email" placeholder="Email Address" onChange={handleChange} className="w-full px-4 py-3 rounded-lg border border-gray-200 outline-none" required />
-                <input name="password" type="password" placeholder="Password" onChange={handleChange} className="w-full px-4 py-3 rounded-lg border border-gray-200 outline-none" required />
+                <input name="email" type="email" placeholder="Email Address" onChange={handleChange} className="w-full px-4 py-3 rounded-lg border border-gray-200 outline-none focus:border-indigo-500 transition-colors" required />
+                <input name="password" type="password" placeholder="Password" onChange={handleChange} className="w-full px-4 py-3 rounded-lg border border-gray-200 outline-none focus:border-indigo-500 transition-colors" required />
               </div>
             </div>
 
             <div className="flex items-start gap-3 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                <input type="checkbox" name="demoAgreed" id="demoAgreed" onChange={handleChange} className="mt-1 h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"/>
-                <label htmlFor="demoAgreed" className="text-sm text-yellow-800">
+                <input type="checkbox" name="demoAgreed" id="demoAgreed" onChange={handleChange} className="mt-1 h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 cursor-pointer"/>
+                <label htmlFor="demoAgreed" className="text-sm text-yellow-800 cursor-pointer select-none">
                     <span className="font-bold">Fee Policy:</span> I understand that the fee (Rs 1500) must be paid immediately after attending the demo class.
                 </label>
             </div>
 
-            <button disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2">
+            <button disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 transform active:scale-95">
               {loading ? 'Creating Account...' : 'Complete Registration'}
               {!loading && <CheckCircle size={20} />}
             </button>
