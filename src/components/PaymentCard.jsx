@@ -10,11 +10,10 @@ const PaymentCard = ({ studentId, studentName, onPaymentSuccess }) => {
 
   // Inside PaymentCard.jsx
 
-// 1. Put the REAL UPI ID here (e.g., 9876543210@ybl, businessname@oksbi)
-const uncleVPA = "unclesphone@ybl"; 
 
 // 2. (Optional) Change the Business Name displayed in the app when they scan
-const businessName = "MusicClass"; 
+const businessName = "KeynoteMusicAcademy"; 
+const uncleVPA = import.meta.env.VITE_UPI_ID || "replace_me@upi";
 
 const amount = "1500";
 const note = `Fee-${studentName}`;

@@ -34,6 +34,22 @@ const TeacherDashboard = () => {
   };
   const timeSlots = generateTimeSlots();
 
+  // Helper to find what time it was 30 mins ago
+  const getPreviousSlot = (timeString) => {
+    if (!timeString) return "";
+    const [hStr, mStr] = timeString.split(':');
+    let h = parseInt(hStr);
+    let m = parseInt(mStr);
+
+    // If currently 30 (e.g., 10:30), previous was 10:00
+    if (m === 30) return `${hStr}:00`;
+
+    // If currently 00 (e.g., 10:00), previous was 09:30
+    let prevH = h - 1;
+    let prevHStr = prevH < 10 ? `0${prevH}` : `${prevH}`;
+    return `${prevHStr}:30`;
+  };
+
   useEffect(() => {
     fetchData();
   }, []);
@@ -191,11 +207,32 @@ const TeacherDashboard = () => {
     fetchData();
   };
 
+  const toggleReviewDay = (day) => {
+    setReviewingStudent(prev => {
+      const currentDays = prev.preferred_days || [];
+      // If day exists, remove it. If not, add it.
+      const newDays = currentDays.includes(day) 
+        ? currentDays.filter(d => d !== day) 
+        : [...currentDays, day];
+      
+      return { ...prev, preferred_days: newDays };
+    });
+  };
+
   const handleAcceptApplication = async () => {
     if (!reviewingStudent) return;
+
+    // --- NEW VALIDATION ---
+    if (reviewingStudent.preferred_days.length < 2) {
+        alert("Error: A student must have at least 2 days selected.");
+        return;
+    }
+    // ----------------------
+
     const { error } = await supabase.from('enrollments')
-        .update({ status: 'active', preferred_time: reviewingStudent.preferred_time })
+        .update({ status: 'active', preferred_time: reviewingStudent.preferred_time, preferred_days: reviewingStudent.preferred_days }) // Ensure days are updated too
         .eq('id', reviewingStudent.id);
+
     if (!error) {
         alert("Enrolled Successfully!");
         setReviewingStudent(null);
@@ -204,7 +241,15 @@ const TeacherDashboard = () => {
   };
 
   const isSlotOccupied = (day, time) => {
-    return activeRoster.find(s => s.preferred_days?.includes(day) && s.preferred_time?.slice(0,5) === time);
+    // 1. Check if a student STARTS at this time
+    const exactMatch = activeRoster.find(s => s.preferred_days?.includes(day) && s.preferred_time?.slice(0,5) === time);
+    if (exactMatch) return exactMatch;
+
+    // 2. Check if a student started 30 mins ago (so they are still here)
+    const prevTime = getPreviousSlot(time);
+    const overlapMatch = activeRoster.find(s => s.preferred_days?.includes(day) && s.preferred_time?.slice(0,5) === prevTime);
+    
+    return overlapMatch;
   };
 
   if (loading) return <div className="p-10 flex justify-center text-indigo-600">Loading Dashboard...</div>;
@@ -358,25 +403,153 @@ const TeacherDashboard = () => {
                             <tr><th className="bg-gray-100 p-2 border border-gray-300 w-16">Time</th>{daysOfWeek.map(day => (<th key={day} className={`p-2 border border-gray-300 w-32 ${reviewingStudent.preferred_days.includes(day) ? 'bg-yellow-100 text-yellow-900 font-bold border-yellow-300' : 'bg-gray-50'}`}>{day.slice(0,3)}</th>))}</tr>
                         </thead>
                         <tbody>
-                            {timeSlots.map(time => (
-                                <tr key={time}>
-                                    <td className="py-1 px-2 border border-gray-300 font-mono text-[10px] bg-gray-50 text-center text-gray-500">{time}</td>
-                                    {daysOfWeek.map(day => {
-                                        const occupiedBy = isSlotOccupied(day, time);
-                                        const isRequested = reviewingStudent.preferred_days.includes(day) && reviewingStudent.preferred_time?.slice(0,5) === time;
-                                        let cellClass = "bg-white"; let content = null;
-                                        if (occupiedBy) { cellClass = isRequested ? "bg-red-500 text-white" : "bg-blue-100 text-blue-800"; content = occupiedBy.student.full_name.split(' ')[0]; } 
-                                        else if (isRequested) { cellClass = "bg-green-500 text-white"; content = "REQUESTED"; }
-                                        return (<td key={day + time} className={`border border-gray-300 p-1 text-center h-8 relative group ${cellClass}`}><div className="truncate font-bold">{content}</div>{occupiedBy && (<div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 bg-black text-white text-xs p-2 rounded z-20 w-max shadow-lg pointer-events-none">{occupiedBy.student.full_name} ({occupiedBy.courses.name})</div>)}</td>);
-                                    })}
-                                </tr>
-                            ))}
-                        </tbody>
+                          {timeSlots.map(time => (
+                              <tr key={time}>
+                                  {/* Time Column */}
+                                  <td className="py-1 px-2 border border-gray-300 font-mono text-[10px] bg-gray-50 text-center text-gray-500">
+                                      {time}
+                                  </td>
+
+                                  {/* Days Columns */}
+                                  {daysOfWeek.map(day => {
+                                      // 1. Check for Existing Student (using your new helper)
+                                      const occupiedBy = isSlotOccupied(day, time);
+                                      
+                                      // 2. Check for New Request (Logic updated to span 2 blocks too)
+                                      const reqStartTime = reviewingStudent.preferred_time?.slice(0,5);
+                                      const isReqStart = reviewingStudent.preferred_days.includes(day) && reqStartTime === time;
+                                      // Check if this slot is the "2nd half" of a request
+                                      const isReqOverlap = reviewingStudent.preferred_days.includes(day) && reqStartTime === getPreviousSlot(time);
+                                      const isRequested = isReqStart || isReqOverlap;
+
+                                      let cellClass = "bg-white"; 
+                                      let content = null;
+                                      // Default: Border on all sides
+                                      let borderClass = "border border-gray-300"; 
+
+                                      // --- LOGIC START ---
+                                      if (occupiedBy) {
+                                          // It is an Existing Student
+                                          const isStart = occupiedBy.preferred_time?.slice(0,5) === time;
+                                          
+                                          // Color: Red if conflict, Blue if existing
+                                          cellClass = isRequested ? "bg-red-500 text-white" : "bg-blue-100 text-blue-800";
+                                          
+                                          if (isStart) {
+                                              // FIRST HALF: Show Name, Remove Bottom Border
+                                              content = occupiedBy.student.full_name.split(' ')[0];
+                                              borderClass = "border-t border-l border-r border-gray-300 border-b-0"; 
+                                          } else {
+                                              // SECOND HALF: Hide Name, Remove Top Border
+                                              content = ""; 
+                                              borderClass = "border-b border-l border-r border-gray-300 border-t-0";
+                                          }
+                                      } 
+                                      else if (isRequested) {
+                                          // It is a New Request (Green)
+                                          cellClass = "bg-green-500 text-white";
+                                          
+                                          if (isReqStart) {
+                                              content = "REQUESTED";
+                                              borderClass = "border-t border-l border-r border-gray-300 border-b-0";
+                                          } else {
+                                              content = "";
+                                              borderClass = "border-b border-l border-r border-gray-300 border-t-0";
+                                          }
+                                      }
+                                      // -------------------
+
+                                      return (
+                                          <td key={day + time} className={`${borderClass} p-1 text-center h-8 relative group ${cellClass}`}>
+                                              <div className="truncate font-bold">{content}</div>
+                                              
+                                              {/* Tooltip on Hover (Only needed for occupied slots) */}
+                                              {occupiedBy && (
+                                                  <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 bg-black text-white text-xs p-2 rounded z-20 w-max shadow-lg pointer-events-none">
+                                                      {occupiedBy.student.full_name} ({occupiedBy.courses.name})
+                                                  </div>
+                                              )}
+                                          </td>
+                                      );
+                                  })}
+                              </tr>
+                          ))}
+                      </tbody>
                     </table>
                 </div>
-                <div className="mt-4 flex flex-col md:flex-row justify-between items-center gap-4 bg-gray-50 p-4 rounded-lg shrink-0">
-                    <div className="text-xs text-gray-600 flex gap-4"><div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-100 border border-blue-300"></div> Existing</div><div className="flex items-center gap-1"><div className="w-3 h-3 bg-green-500"></div> New (Free)</div><div className="flex items-center gap-1"><div className="w-3 h-3 bg-red-500"></div> Conflict</div></div>
-                    <div className="flex gap-3"><div className="flex items-center gap-2"><span className="text-sm font-bold">Time:</span><input type="time" value={reviewingStudent.preferred_time} onChange={(e) => setReviewingStudent({...reviewingStudent, preferred_time: e.target.value})} className="border rounded p-1 text-sm bg-white"/></div><button onClick={() => window.open(`https://wa.me/${reviewingStudent.student.phone_number}`)} className="bg-green-100 text-green-700 px-3 py-2 rounded font-bold hover:bg-green-200 text-sm">WhatsApp</button><button onClick={handleAcceptApplication} className="bg-indigo-600 text-white px-4 py-2 rounded font-bold hover:bg-indigo-700 flex items-center gap-2 text-sm"><CheckCircle size={16} /> Enroll</button></div>
+                {/* Modal Footer Controls */}
+                <div className="mt-4 flex flex-col xl:flex-row justify-between items-center gap-4 bg-gray-50 p-4 rounded-lg shrink-0 border-t border-gray-200">
+                    
+                    {/* Legend (Left Side) */}
+                    <div className="text-xs text-gray-600 flex gap-4">
+                        <div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-100 border border-blue-300"></div> Existing</div>
+                        <div className="flex items-center gap-1"><div className="w-3 h-3 bg-green-500"></div> Requesting</div>
+                        <div className="flex items-center gap-1"><div className="w-3 h-3 bg-red-500"></div> Conflict</div>
+                    </div>
+
+                    {/* Controls (Right Side) */}
+                    <div className="flex flex-col sm:flex-row items-center gap-4">
+                        
+                        {/* NEW: Day Toggles with Limit Logic */}
+                        <div className="flex items-center gap-2">
+                            <span className="text-sm font-bold text-gray-700">Days:</span>
+                            <div className="flex gap-1">
+                                {daysOfWeek.map(day => {
+                                    const isSelected = reviewingStudent.preferred_days.includes(day);
+                                    
+                                    // DISABLE if: We have 3 days AND this one is not currently selected
+                                    const isDisabled = reviewingStudent.preferred_days.length >= 3 && !isSelected;
+
+                                    return (
+                                        <button 
+                                            key={day} 
+                                            onClick={() => !isDisabled && toggleReviewDay(day)}
+                                            disabled={isDisabled}
+                                            className={`
+                                                px-2 py-1 text-xs font-bold rounded border transition-all
+                                                ${isSelected 
+                                                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
+                                                    : isDisabled
+                                                        ? 'bg-gray-100 text-gray-300 border-gray-200 cursor-not-allowed' // Grayed out style
+                                                        : 'bg-white text-gray-500 border-gray-300 hover:border-indigo-400 hover:text-indigo-600 cursor-pointer'
+                                                }
+                                            `}
+                                        >
+                                            {day.slice(0, 3)}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* Time Picker */}
+                        <div className="flex items-center gap-2">
+                            <span className="text-sm font-bold text-gray-700">Time:</span>
+                            <input 
+                                type="time" 
+                                value={reviewingStudent.preferred_time} 
+                                onChange={(e) => setReviewingStudent({...reviewingStudent, preferred_time: e.target.value})} 
+                                className="border border-gray-300 rounded px-2 py-1 text-sm bg-white focus:border-indigo-500 outline-none font-bold text-gray-700"
+                            />
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="flex gap-2 border-l pl-4 border-gray-300">
+                            <button 
+                                onClick={() => window.open(`https://wa.me/${reviewingStudent.student.phone_number}`)} 
+                                className="bg-green-100 text-green-700 px-3 py-2 rounded-lg font-bold hover:bg-green-200 text-sm transition-colors"
+                                title="Discuss with Student"
+                            >
+                                WhatsApp
+                            </button>
+                            <button 
+                                onClick={handleAcceptApplication} 
+                                className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-indigo-700 flex items-center gap-2 text-sm shadow-md transition-colors"
+                            >
+                                <CheckCircle size={16} /> Enroll
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
