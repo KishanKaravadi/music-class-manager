@@ -18,6 +18,9 @@ const TeacherDashboard = () => {
   const [historyRecords, setHistoryRecords] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
+  const [reminderTargets, setReminderTargets] = useState([]);
+  const [showReminderModal, setShowReminderModal] = useState(false);
+
   const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
   
   const generateTimeSlots = () => {
@@ -115,21 +118,24 @@ const TeacherDashboard = () => {
     setLoading(false);
   };
 
+  const sendWhatsApp = (student) => {
+  const msg = `Hello ${student.student.full_name}, friendly reminder to pay your Music Class fees for ${new Date().toLocaleString('default', { month: 'long' })}.`;
+  window.open(`https://wa.me/${student.student.phone_number}?text=${encodeURIComponent(msg)}`, '_blank');
+};
+
   const handleBulkReminders = () => {
-    let targetStudents = activeRoster;
-    targetStudents = targetStudents.filter(student => !pendingPayments.some(p => p.student_id === student.student.id));
-    targetStudents = targetStudents.filter(student => !paidStudentIds.includes(student.student.id));
-    
-    if (targetStudents.length === 0) return alert("Everyone is paid up or pending! No reminders needed.");
+  let targetStudents = activeRoster;
+  
+  // Filter out those with pending payments or who have already paid
+  targetStudents = targetStudents.filter(student => !pendingPayments.some(p => p.student_id === student.student.id));
+  targetStudents = targetStudents.filter(student => !paidStudentIds.includes(student.student.id));
+  
+  if (targetStudents.length === 0) return alert("Everyone is paid up or pending! No reminders needed.");
 
-    const confirm = window.confirm(`Found ${targetStudents.length} students who haven't paid for ${new Date().toLocaleString('default', { month: 'long' })} yet.\n\nSend WhatsApp reminders?`);
-    if (!confirm) return;
-
-    targetStudents.forEach((s) => {
-        const msg = `Hello ${s.student.full_name}, friendly reminder to pay your Music Class fees for ${new Date().toLocaleString('default', { month: 'long' })}.`;
-        window.open(`https://wa.me/${s.student.phone_number}?text=${encodeURIComponent(msg)}`, '_blank');
-    });
-  };
+  // Instead of looping window.open, show the modal
+  setReminderTargets(targetStudents);
+  setShowReminderModal(true);
+};
 
   const handleApprovePayment = async (paymentId) => {
     await supabase.from('payments').update({ status: 'approved' }).eq('id', paymentId);
@@ -363,6 +369,48 @@ const TeacherDashboard = () => {
                     <div className="flex gap-3"><div className="flex items-center gap-2"><span className="text-sm font-bold">Time:</span><input type="time" value={reviewingStudent.preferred_time} onChange={(e) => setReviewingStudent({...reviewingStudent, preferred_time: e.target.value})} className="border rounded p-1 text-sm bg-white"/></div><button onClick={() => window.open(`https://wa.me/${reviewingStudent.student.phone_number}`)} className="bg-green-100 text-green-700 px-3 py-2 rounded font-bold hover:bg-green-200 text-sm">WhatsApp</button><button onClick={handleAcceptApplication} className="bg-indigo-600 text-white px-4 py-2 rounded font-bold hover:bg-indigo-700 flex items-center gap-2 text-sm"><CheckCircle size={16} /> Enroll</button></div>
                 </div>
             </div>
+        </div>
+      )}
+
+      {/* --- REMINDERS MODAL --- */}
+      {showReminderModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 relative">
+            <button onClick={() => setShowReminderModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-black">
+              <X size={28}/>
+            </button>
+            
+            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
+              <Bell className="text-orange-600"/> Send Reminders
+            </h2>
+            
+            <p className="text-gray-600 mb-4">
+              Found <b>{reminderTargets.length}</b> students with unpaid fees. Click "Send" to open WhatsApp for each.
+            </p>
+
+            <div className="bg-gray-50 rounded-lg border border-gray-200 max-h-96 overflow-y-auto p-2">
+              {reminderTargets.map((student) => (
+                <div key={student.id} className="flex justify-between items-center bg-white p-3 mb-2 rounded border border-gray-100 shadow-sm">
+                  <div>
+                    <div className="font-bold">{student.student.full_name}</div>
+                    <div className="text-xs text-gray-500">{student.student.phone_number}</div>
+                  </div>
+                  <button 
+                    onClick={() => sendWhatsApp(student)}
+                    className="bg-green-500 text-white text-sm font-bold px-3 py-2 rounded hover:bg-green-600 flex items-center gap-1"
+                  >
+                    Send <CheckCircle size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            
+            <div className="mt-4 text-right">
+              <button onClick={() => setShowReminderModal(false)} className="text-gray-500 font-bold hover:text-gray-800">
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
