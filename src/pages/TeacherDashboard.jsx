@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { 
   Users, DollarSign, Calendar, CheckCircle, X, Bell, 
-  History, MessageCircle, User, Search, LayoutDashboard, CreditCard, UserPlus, Music
+  History, MessageCircle, User, Search, LayoutDashboard, CreditCard, UserPlus
 } from 'lucide-react';
 
 const TeacherDashboard = () => {
@@ -51,6 +51,7 @@ const TeacherDashboard = () => {
     return `${prevHStr}:30`;
   };
 
+  // Checks for direct overlap OR 30-min overlap
   const isSlotOccupied = (day, time) => {
     const exactMatch = activeRoster.find(s => s.preferred_days?.includes(day) && s.preferred_time?.slice(0,5) === time);
     if (exactMatch) return exactMatch;
@@ -149,16 +150,30 @@ const TeacherDashboard = () => {
 
   const handleAcceptApplication = async () => {
     if (!reviewingStudent) return;
+    
+    // 1. Validate Days Count
     if (reviewingStudent.preferred_days.length < 2) return alert("Select at least 2 days.");
 
+    // 2. NEW: Validate Conflicts
+    // We check every selected day against the isSlotOccupied logic
+    const time = reviewingStudent.preferred_time.slice(0, 5); // Ensure HH:MM format
+    const hasConflict = reviewingStudent.preferred_days.some(day => isSlotOccupied(day, time));
+
+    if (hasConflict) {
+        return alert("Cannot Enroll: There is a scheduling conflict on one of the selected days. Please choose a different time or day.");
+    }
+
+    // 3. Proceed to Update
     const { error } = await supabase.from('enrollments')
         .update({ status: 'active', preferred_time: reviewingStudent.preferred_time, preferred_days: reviewingStudent.preferred_days })
         .eq('id', reviewingStudent.id);
 
     if (!error) {
-        alert("Enrolled!");
+        alert("Enrolled Successfully!");
         setReviewingStudent(null);
         fetchData();
+    } else {
+        alert("Error enrolling: " + error.message);
     }
   };
 
@@ -551,19 +566,27 @@ const TeacherDashboard = () => {
                 <div className="flex justify-between items-center mb-4"><h2 className="text-xl font-bold">History</h2><button onClick={() => setShowHistory(false)}><X/></button></div>
                 <input type="date" value={historyDate} onChange={(e) => setHistoryDate(e.target.value)} className="w-full border p-2 rounded mb-4"/>
                 <div className="max-h-64 overflow-y-auto space-y-2">
-                    {historyRecords.map(r => {
-                        const parts = r.reason.split(':');
-                        const instrument = parts[1] ? parts[1].trim() : null;
-                        return (
-                            <div key={r.id} className="p-3 bg-gray-50 border-l-4 border-indigo-500 flex justify-between items-center">
-                                <div>
-                                    <span className="font-bold block">{r.student.full_name}</span>
-                                    {instrument && <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full uppercase">{instrument}</span>}
+                    {historyRecords.length === 0 ? (
+                        <div className="text-center text-gray-400 p-4">No classes recorded for this date.</div>
+                    ) : (
+                        historyRecords.map(r => {
+                            const parts = r.reason.split(':');
+                            const instrument = parts[1] ? parts[1].trim() : null;
+                            return (
+                                <div key={r.id} className="p-3 bg-gray-50 border-l-4 border-indigo-500 flex justify-between items-center rounded-r shadow-sm">
+                                    <div>
+                                        <div className="font-bold text-gray-800">{r.student.full_name}</div>
+                                        {instrument && (
+                                            <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold uppercase tracking-wide">
+                                                {instrument}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <span className="text-gray-500 font-mono text-sm">{new Date(r.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                                 </div>
-                                <span className="text-sm text-gray-500">{new Date(r.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-                            </div>
-                        )
-                    })}
+                            );
+                        })
+                    )}
                 </div>
             </div>
         </div>
@@ -597,7 +620,6 @@ const TeacherDashboard = () => {
                     <div className="w-16 h-16 bg-white text-indigo-600 rounded-full flex items-center justify-center font-bold text-2xl shadow-inner">{viewingStudent.student.full_name.charAt(0)}</div>
                     <div>
                         <h2 className="text-2xl font-bold">{viewingStudent.student.full_name}</h2>
-                        {/* NEW: Updated Header to show Course Count */}
                         <div className="flex items-center gap-2 mt-1">
                             <p className="text-indigo-100 text-sm flex items-center gap-1"><User size={14}/> Student Profile</p>
                             <span className="bg-white/20 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">

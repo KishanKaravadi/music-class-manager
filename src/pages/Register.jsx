@@ -437,7 +437,7 @@ const Register = () => {
                                     className="mt-1 h-4 w-4 text-indigo-600"
                                 />
                                 <label className="text-xs text-yellow-800">
-                                    <span className="font-bold">Fee Policy:</span> I understand that the fee (Rs 1500) must be paid immediately after attending the demo class.
+                                    <span className="font-bold">Fee Policy:</span> I understand that the fee must be paid immediately after attending the demo class.
                                 </label>
                               </div>
                               

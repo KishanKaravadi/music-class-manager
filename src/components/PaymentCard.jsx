@@ -7,13 +7,13 @@ const PaymentCard = ({ studentId, studentName, onPaymentSuccess }) => {
   const [showQR, setShowQR] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // Read UPI ID from Env (or default)
-  const uncleVPA = import.meta.env.VITE_UPI_ID || "replace_me@upi"; 
-  
+  // FIXED: Specific UPI ID for India (GPay/PhonePe)
+  const uncleVPA = "harshini.5907-1@oksbi"; 
   const businessName = "MusicClass"; 
-  const note = `Fee-${studentName}`;
+  const note = `Fee-${studentName.replace(/\s/g, '')}`; // Remove spaces for better compatibility
 
-  // UPDATED: Removed '&am=' so the user enters the amount themselves
+  // FIXED: Standard UPI String format
+  // pa = Payee Address, pn = Payee Name, tn = Transaction Note
   const upiString = `upi://pay?pa=${uncleVPA}&pn=${businessName}&tn=${note}`;
 
   const handlePaymentSent = async () => {
@@ -25,7 +25,7 @@ const PaymentCard = ({ studentId, studentName, onPaymentSuccess }) => {
       .insert([
         { 
           student_id: studentId, 
-          amount_paid: 0, // We just track THAT they paid, not how much
+          amount_paid: 0, 
           status: 'pending', 
           month_for: currentMonthYear 
         }
