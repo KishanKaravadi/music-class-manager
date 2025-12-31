@@ -362,7 +362,7 @@ const TeacherDashboard = () => {
         {activeTab === 'payments' && (
             <div className="animate-in fade-in">
                 <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden max-w-3xl mx-auto">
-                    <div className="p-6 bg-orange-50 border-b border-orange-100"><h2 className="font-bold text-xl text-orange-800 flex items-center gap-2"><DollarSign/> Payment Approvals</h2></div>
+                    <div className="p-6 bg-orange-50 border-b border-orange-100"><h2 className="font-bold text-xl text-orange-800 flex items-center gap-2">Payment Approvals</h2></div>
                     {pendingPayments.length === 0 ? <div className="p-12 text-center text-gray-400">No pending payments.</div> : (
                         <div className="divide-y divide-gray-100">
                             {pendingPayments.map(p => (
