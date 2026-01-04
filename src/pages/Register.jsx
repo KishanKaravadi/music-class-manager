@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { useNavigate, Link } from 'react-router-dom';
-import { User, Lock, CheckCircle, Clock, Info, Plus, Trash2, ArrowRight, ArrowLeft, X } from 'lucide-react';
+import { User, Lock, CheckCircle, Clock, Info, Plus, Trash2, ArrowRight, ArrowLeft } from 'lucide-react';
 
 // --- DATA CONSTANTS ---
 const COURSES_LIST = [
@@ -28,17 +28,40 @@ const Register = () => {
   const [courseQueue, setCourseQueue] = useState([]);
 
   // The "Current" course being configured in Step 2
-  const [currentCourse, setCurrentCourse] = useState({
-    courseId: '1',
-    preferredDays: [],
-    preferredTime: '17:00',
-    demoAgreed: false
-  });
-  const [showTimePicker, setShowTimePicker] = useState(false);
+  // We now store schedule as an array of objects: [{ day: 'Monday', time: '17:00' }]
+  const [currentSchedule, setCurrentSchedule] = useState([]);
+  
+  // Temporary state for the "Add Slot" builder
+  const [tempDay, setTempDay] = useState('Monday');
+  const [tempTime, setTempTime] = useState('17:00');
+
+  const [currentCourseId, setCurrentCourseId] = useState('1');
+  const [demoAgreed, setDemoAgreed] = useState(false);
 
   const daysOptions = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-  // --- UPDATED COURSE DETAILS (FROM YOUR REQUEST) ---
+  // --- HELPER: Generate Time Slots (00 and 30 only) ---
+  const generateTimeSlots = () => {
+    const slots = [];
+    for (let hour = 9; hour <= 19; hour++) {
+      const formattedHour = hour < 10 ? `0${hour}` : hour;
+      slots.push(`${formattedHour}:00`);
+      if (hour !== 19) slots.push(`${formattedHour}:30`);
+    }
+    return slots;
+  };
+  const timeSlots = generateTimeSlots();
+
+  const formatTime = (time) => {
+    if (!time) return "";
+    const [hour, min] = time.split(':');
+    const h = parseInt(hour);
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const displayHour = h % 12 || 12; 
+    return `${displayHour}:${min} ${ampm}`;
+  };
+
+  // --- COURSE DETAILS CONTENT ---
   const courseDetails = {
     western: {
       duration: "Initial Grade to Grade 8",
@@ -77,35 +100,10 @@ const Register = () => {
     return courseDetails.carnatic_standard;
   };
   
-  const currentInfo = getCurrentCourseInfo(currentCourse.courseId);
-
-  // --- LOGIC: FILTER AVAILABLE COURSES ---
-  const getAvailableCourses = () => {
-    // Return only courses that are NOT in the queue
-    return COURSES_LIST.filter(c => !courseQueue.some(q => q.courseId === c.id));
-  };
-  const availableCourses = getAvailableCourses();
-
-  // --- HELPERS ---
-  const generateTimeSlots = () => {
-    const slots = [];
-    for (let hour = 9; hour <= 19; hour++) {
-      const formattedHour = hour < 10 ? `0${hour}` : hour;
-      slots.push(`${formattedHour}:00`);
-      if (hour !== 19) slots.push(`${formattedHour}:30`);
-    }
-    return slots;
-  };
-  const timeSlots = generateTimeSlots();
-
-  const formatTime = (time) => {
-    if (!time) return "Select Time";
-    const [hour, min] = time.split(':');
-    const h = parseInt(hour);
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    const displayHour = h % 12 || 12; 
-    return `${displayHour}:${min} ${ampm}`;
-  };
+  const currentInfo = getCurrentCourseInfo(currentCourseId);
+  
+  // Filter out courses already in queue so user can't select them twice
+  const availableCourses = COURSES_LIST.filter(c => !courseQueue.some(q => q.courseId === c.id));
 
   // --- HANDLERS ---
   const handlePersonalChange = (e) => {
@@ -120,57 +118,64 @@ const Register = () => {
     setStep(2);
   };
 
-  const handleDayChange = (day) => {
-    const currentDays = currentCourse.preferredDays;
-    if (currentDays.includes(day)) {
-        setCurrentCourse({ ...currentCourse, preferredDays: currentDays.filter(d => d !== day) });
-    } else {
-      if (currentDays.length < 3) {
-        setCurrentCourse({ ...currentCourse, preferredDays: [...currentDays, day] });
+  // Handler: Add a specific Day+Time slot to the current schedule
+  const handleAddSlot = () => {
+      // Prevent duplicate days
+      if (currentSchedule.some(s => s.day === tempDay)) {
+          return alert(`You already have a slot on ${tempDay}. Remove it first to change time.`);
       }
-    }
+      // Max 3 days constraint
+      if (currentSchedule.length >= 3) {
+          return alert("You can select a maximum of 3 days.");
+      }
+      setCurrentSchedule([...currentSchedule, { day: tempDay, time: tempTime }]);
   };
 
-  const handleAddCourse = () => {
-    // Validation
-    if (currentCourse.preferredDays.length < 2) return alert("Please select at least 2 days.");
-    if (!currentCourse.demoAgreed) return alert("Please agree to the Demo Class policy.");
+  // Handler: Remove a slot
+  const handleRemoveSlot = (idx) => {
+      const newSched = [...currentSchedule];
+      newSched.splice(idx, 1);
+      setCurrentSchedule(newSched);
+  };
 
-    // Add to Queue
-    const newQueue = [...courseQueue, { ...currentCourse }];
+  // Handler: Add the fully configured course to the main queue
+  const handleAddCourseToQueue = () => {
+    // Validate
+    if (currentSchedule.length < 2) return alert("Please select at least 2 class slots.");
+    if (!demoAgreed) return alert("Please agree to the Demo Class policy.");
+
+    // Format schedule for DB (Storing as strings: "Monday 17:00")
+    const formattedDays = currentSchedule.map(s => `${s.day} ${s.time}`);
+
+    const newCourse = {
+        courseId: currentCourseId,
+        preferredDays: formattedDays,
+        preferredTime: null, // We ignore this legacy field now, as time is inside days
+        demoAgreed: demoAgreed
+    };
+
+    const newQueue = [...courseQueue, newCourse];
     setCourseQueue(newQueue);
     
-    // Determine the next available ID to default to
+    // Auto-select the next available instrument ID
     const remaining = COURSES_LIST.filter(c => !newQueue.some(q => q.courseId === c.id));
     const nextId = remaining.length > 0 ? remaining[0].id : '';
-
-    // Reset Form for next entry
-    setCurrentCourse({
-        courseId: nextId,
-        preferredDays: [],
-        preferredTime: '17:00',
-        demoAgreed: false
-    });
     
-    if (!nextId) {
-        alert("You have selected all available courses!");
-    } else {
-        alert("Course Added! Select your next instrument.");
-    }
+    // Reset Form
+    setCurrentCourseId(nextId);
+    setCurrentSchedule([]);
+    setDemoAgreed(false);
+    
+    alert(nextId ? "Course Added! You can now select your next instrument." : "All courses selected!");
   };
 
-  const removeCourse = (index) => {
-    // When removing, we put that course back into the available pool
-    // We just need to remove it from queue, the render logic handles the dropdown
+  const removeCourseFromQueue = (index) => {
     const newQueue = [...courseQueue];
     newQueue.splice(index, 1);
     setCourseQueue(newQueue);
     
-    // Optional: If we currently have no ID selected (because list was full), reset to this freed one
-    if (currentCourse.courseId === '') {
-        // We can't easily grab the ID here without passing it, but user can just select from dropdown now
-         setCurrentCourse(prev => ({ ...prev, courseId: '1' })); // Fallback, render will fix
-    }
+    // If we were empty/full, reset ID to the first available one (usually Piano '1')
+    if (!currentCourseId) setCurrentCourseId('1');
   };
 
   const handleFinalRegister = async () => {
@@ -200,7 +205,7 @@ const Register = () => {
         student_id: userId,
         course_id: c.courseId,
         preferred_days: c.preferredDays,
-        preferred_time: c.preferredTime,
+        preferred_time: null, // Legacy field is null
         joining_date: new Date(),
         demo_agreed: c.demoAgreed,
         status: 'pending'
@@ -220,30 +225,6 @@ const Register = () => {
   return (
     <div className="min-h-screen flex bg-gray-50 relative">
       
-      {/* TIME PICKER MODAL */}
-      {showTimePicker && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden transform transition-all scale-100">
-                <div className="bg-indigo-600 p-4 text-white flex justify-between items-center">
-                    <h3 className="font-bold text-lg flex items-center gap-2"><Clock size={20}/> Select Time</h3>
-                    <button onClick={() => setShowTimePicker(false)} className="hover:bg-indigo-700 p-1 rounded-full"><X size={24}/></button>
-                </div>
-                <div className="p-4 grid grid-cols-3 gap-3 max-h-[60vh] overflow-y-auto">
-                    {timeSlots.map(time => (
-                        <button
-                            key={time}
-                            type="button"
-                            onClick={() => { setCurrentCourse({...currentCourse, preferredTime: time}); setShowTimePicker(false); }}
-                            className={`py-3 px-2 rounded-lg text-sm font-bold border transition-all ${currentCourse.preferredTime === time ? 'bg-indigo-600 text-white border-indigo-600 shadow-md scale-105' : 'bg-gray-50 text-gray-700 border-gray-200 hover:border-indigo-400 hover:bg-indigo-50'}`}
-                        >
-                            {formatTime(time)}
-                        </button>
-                    ))}
-                </div>
-            </div>
-        </div>
-      )}
-
       {/* LEFT BANNER */}
       <div className="hidden lg:flex w-5/12 bg-gradient-to-br from-indigo-600 to-purple-700 items-center justify-center p-12 text-white fixed h-screen top-0 left-0">
         <div className="z-10 max-w-md">
@@ -274,21 +255,30 @@ const Register = () => {
                   <p className="text-gray-500 mb-8">Step 1 of 2: Personal Details</p>
                   
                   <form onSubmit={handleNextStep} className="space-y-6">
-                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                        <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2"><User size={16} /> Basic Info</h3>
-                        <div className="space-y-4">
+                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 space-y-4">
+                        <div className="space-y-2">
+                            <label className="text-xs font-bold text-gray-500 uppercase">Full Name</label>
                             <input name="fullName" value={personalData.fullName} placeholder="Student Full Name" onChange={handlePersonalChange} className="w-full px-4 py-3 rounded-lg border border-gray-200 outline-none focus:border-indigo-500 transition-colors" required />
-                            <div className="flex gap-4">
-                                <input name="age" type="number" value={personalData.age} placeholder="Age" onChange={handlePersonalChange} className="w-1/3 px-4 py-3 rounded-lg border border-gray-200 outline-none focus:border-indigo-500" required />
-                                <input name="phone" value={personalData.phone} placeholder="Phone Number" onChange={handlePersonalChange} className="w-2/3 px-4 py-3 rounded-lg border border-gray-200 outline-none focus:border-indigo-500" required />
+                        </div>
+                        
+                        <div className="flex gap-4">
+                            <div className="w-1/3 space-y-2">
+                                <label className="text-xs font-bold text-gray-500 uppercase">Age</label>
+                                <input name="age" type="number" value={personalData.age} placeholder="Age" onChange={handlePersonalChange} className="w-full px-4 py-3 rounded-lg border border-gray-200 outline-none focus:border-indigo-500" required />
+                            </div>
+                            <div className="w-2/3 space-y-2">
+                                <label className="text-xs font-bold text-gray-500 uppercase">Phone</label>
+                                <input name="phone" value={personalData.phone} placeholder="Phone Number" onChange={handlePersonalChange} className="w-full px-4 py-3 rounded-lg border border-gray-200 outline-none focus:border-indigo-500" required />
                             </div>
                         </div>
-                    </div>
 
-                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                        <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2"><Lock size={16} /> Login Credentials</h3>
-                        <div className="space-y-4">
-                            <input name="email" type="email" value={personalData.email} placeholder="Email Address" onChange={handlePersonalChange} className="w-full px-4 py-3 rounded-lg border border-gray-200 outline-none focus:border-indigo-500" required />
+                        <div className="space-y-2">
+                            <label className="text-xs font-bold text-gray-500 uppercase">Email Address</label>
+                            <input name="email" type="email" value={personalData.email} placeholder="Email" onChange={handlePersonalChange} className="w-full px-4 py-3 rounded-lg border border-gray-200 outline-none focus:border-indigo-500" required />
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="text-xs font-bold text-gray-500 uppercase">Password</label>
                             <input name="password" type="password" value={personalData.password} placeholder="Password" onChange={handlePersonalChange} className="w-full px-4 py-3 rounded-lg border border-gray-200 outline-none focus:border-indigo-500" required />
                         </div>
                     </div>
@@ -319,9 +309,12 @@ const Register = () => {
                               <div key={idx} className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl flex justify-between items-center">
                                   <div>
                                       <div className="font-bold text-indigo-900">{courseNames[course.courseId]}</div>
-                                      <div className="text-sm text-indigo-700">{course.preferredDays.join(", ")} @ {formatTime(course.preferredTime)}</div>
+                                      <div className="text-sm text-indigo-700">
+                                          {/* Display formatted list of days+times */}
+                                          {course.preferredDays.map(d => d.replace(' ', ' @ ')).join(', ')}
+                                      </div>
                                   </div>
-                                  <button onClick={() => removeCourse(idx)} className="text-red-500 hover:bg-red-100 p-2 rounded-lg transition-colors"><Trash2 size={18}/></button>
+                                  <button onClick={() => removeCourseFromQueue(idx)} className="text-red-500 hover:bg-red-100 p-2 rounded-lg transition-colors"><Trash2 size={18}/></button>
                               </div>
                           ))}
                       </div>
@@ -342,11 +335,11 @@ const Register = () => {
                               <div>
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Instrument</label>
                                 <select 
-                                    value={currentCourse.courseId}
-                                    onChange={(e) => setCurrentCourse({...currentCourse, courseId: e.target.value})}
+                                    value={currentCourseId}
+                                    onChange={(e) => setCurrentCourseId(e.target.value)}
                                     className="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none bg-white focus:border-indigo-500"
                                 >
-                                    {/* Dynamically Map Western Category */}
+                                    {/* Dynamically Map Available Western Category */}
                                     {availableCourses.some(c => c.category === 'Western') && (
                                         <optgroup label="Western">
                                             {availableCourses.filter(c => c.category === 'Western').map(c => (
@@ -355,7 +348,7 @@ const Register = () => {
                                         </optgroup>
                                     )}
                                     
-                                    {/* Dynamically Map Carnatic Category */}
+                                    {/* Dynamically Map Available Carnatic Category */}
                                     {availableCourses.some(c => c.category === 'Carnatic') && (
                                         <optgroup label="Carnatic">
                                             {availableCourses.filter(c => c.category === 'Carnatic').map(c => (
@@ -366,7 +359,7 @@ const Register = () => {
                                 </select>
                               </div>
 
-                              {/* Info Card with FULL details */}
+                              {/* Info Card */}
                               <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
                                 <div className="flex items-start gap-3">
                                   <Info className="text-blue-600 mt-1 shrink-0" size={20} />
@@ -374,14 +367,12 @@ const Register = () => {
                                     <h4 className="font-bold text-blue-800 text-sm uppercase mb-1">Course Duration: {currentInfo.duration}</h4>
                                     {currentInfo.details && <p className="text-blue-700 text-sm mb-2">{currentInfo.details}</p>}
                                     
-                                    {/* Structure List */}
                                     {currentInfo.structure && (
                                         <ul className="text-xs text-blue-600 space-y-1 list-disc pl-4 mb-2">
                                         {currentInfo.structure.map((line, idx) => <li key={idx}>{line}</li>)}
                                         </ul>
                                     )}
                                     
-                                    {/* Exams Info */}
                                     {currentInfo.exams && (
                                         <p className="text-xs font-bold text-blue-800 mt-2 border-t border-blue-200 pt-2">
                                             {currentInfo.exams}
@@ -391,50 +382,67 @@ const Register = () => {
                                 </div>
                               </div>
 
-                              {/* Days */}
-                              <div>
-                                <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Preferred Days <span className="font-normal normal-case">(Select 2-3)</span></label>
-                                <div className="grid grid-cols-4 gap-2">
-                                    {daysOptions.map(day => {
-                                        const isSelected = currentCourse.preferredDays.includes(day);
-                                        const isDisabled = currentCourse.preferredDays.length >= 3 && !isSelected;
-                                        return (
-                                            <button
-                                                key={day}
-                                                type="button"
-                                                onClick={() => !isDisabled && handleDayChange(day)}
-                                                disabled={isDisabled}
-                                                className={`text-xs py-2 rounded border font-bold transition-all ${isSelected ? 'bg-indigo-600 text-white border-indigo-600' : isDisabled ? 'bg-gray-100 text-gray-300' : 'bg-white text-gray-500 hover:border-indigo-400'}`}
-                                            >
-                                                {day.slice(0, 3)}
-                                            </button>
-                                        );
-                                    })}
-                                </div>
+                              {/* SCHEDULE BUILDER (UPDATED TEXT) */}
+                              <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                                  {/* Fixed: Simplified label as requested */}
+                                  <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Select your dates</label>
+                                  
+                                  <div className="flex gap-2 mb-3">
+                                      {/* Day Select */}
+                                      <select 
+                                          value={tempDay}
+                                          onChange={(e) => setTempDay(e.target.value)}
+                                          className="flex-1 px-3 py-2 rounded border border-gray-300 text-sm font-bold text-gray-700 focus:border-indigo-500 outline-none"
+                                      >
+                                          {daysOptions.map(d => <option key={d} value={d}>{d}</option>)}
+                                      </select>
+
+                                      {/* Time Select */}
+                                      <select 
+                                          value={tempTime}
+                                          onChange={(e) => setTempTime(e.target.value)}
+                                          className="flex-1 px-3 py-2 rounded border border-gray-300 text-sm font-bold text-gray-700 focus:border-indigo-500 outline-none"
+                                      >
+                                          {timeSlots.map(t => <option key={t} value={t}>{formatTime(t)}</option>)}
+                                      </select>
+
+                                      <button 
+                                          onClick={handleAddSlot}
+                                          type="button"
+                                          className="bg-indigo-600 text-white px-4 rounded font-bold hover:bg-indigo-700 transition-colors"
+                                      >
+                                          Add
+                                      </button>
+                                  </div>
+
+                                  {/* List of selected slots */}
+                                  {currentSchedule.length > 0 ? (
+                                      <div className="space-y-2">
+                                          {currentSchedule.map((slot, idx) => (
+                                              <div key={idx} className="flex justify-between items-center bg-white p-2 rounded border border-gray-200 shadow-sm text-sm animate-in fade-in slide-in-from-left-2">
+                                                  <span className="font-bold text-gray-800">{slot.day} @ {formatTime(slot.time)}</span>
+                                                  <button 
+                                                      onClick={() => handleRemoveSlot(idx)}
+                                                      type="button"
+                                                      className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded transition-colors"
+                                                  >
+                                                      <Trash2 size={16}/>
+                                                  </button>
+                                              </div>
+                                          ))}
+                                      </div>
+                                  ) : (
+                                      <div className="text-xs text-gray-400 text-center italic py-2">No slots added yet. Select your dates.</div>
+                                  )}
                               </div>
 
-                              {/* Time */}
-                              <div>
-                                <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Time Slot</label>
-                                <div 
-                                    onClick={() => setShowTimePicker(true)}
-                                    className="w-full px-4 py-2 rounded-lg border border-gray-200 bg-white cursor-pointer hover:border-indigo-400 flex justify-between items-center group"
-                                >
-                                    <div className="flex items-center gap-2">
-                                        <Clock size={16} className="text-indigo-600 group-hover:scale-110 transition-transform"/>
-                                        <span className="font-bold text-gray-700">{formatTime(currentCourse.preferredTime)}</span>
-                                    </div>
-                                    <span className="text-xs font-bold text-indigo-600 uppercase">Change</span>
-                                </div>
-                              </div>
-
-                              {/* Checkbox */}
+                              {/* Fee Checkbox */}
                               <div className="flex items-start gap-2 bg-yellow-50 p-3 rounded border border-yellow-200">
                                 <input 
                                     type="checkbox" 
-                                    checked={currentCourse.demoAgreed}
-                                    onChange={(e) => setCurrentCourse({...currentCourse, demoAgreed: e.target.checked})}
-                                    className="mt-1 h-4 w-4 text-indigo-600"
+                                    checked={demoAgreed}
+                                    onChange={(e) => setDemoAgreed(e.target.checked)}
+                                    className="mt-1 h-4 w-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
                                 />
                                 <label className="text-xs text-yellow-800">
                                     <span className="font-bold">Fee Policy:</span> I understand that the fee must be paid immediately after attending the demo class.
@@ -443,7 +451,7 @@ const Register = () => {
                               
                               <button 
                                 type="button"
-                                onClick={handleAddCourse}
+                                onClick={handleAddCourseToQueue}
                                 className="w-full bg-black text-white font-bold py-3 rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-2"
                               >
                                 <Plus size={18}/> Add Course to List

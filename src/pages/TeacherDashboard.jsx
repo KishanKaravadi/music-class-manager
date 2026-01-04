@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { 
   Users, DollarSign, Calendar, CheckCircle, X, Bell, Trash2,
-  History, MessageCircle, User, Search, LayoutDashboard, CreditCard, UserPlus, Music
+  History, MessageCircle, User, Search, LayoutDashboard, CreditCard, UserPlus
 } from 'lucide-react';
 
 const TeacherDashboard = () => {
@@ -20,17 +20,21 @@ const TeacherDashboard = () => {
   // Modals
   const [reviewingStudent, setReviewingStudent] = useState(null);
   const [viewingStudent, setViewingStudent] = useState(null);
-  const [showMasterSchedule, setShowMasterSchedule] = useState(false); // NEW
+  const [showMasterSchedule, setShowMasterSchedule] = useState(false); 
   const [reminderTargets, setReminderTargets] = useState([]);
   const [showReminderModal, setShowReminderModal] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [historyDate, setHistoryDate] = useState(new Date().toISOString().split('T')[0]); 
   const [historyRecords, setHistoryRecords] = useState([]);
   
+  const [reviewDefaultTime, setReviewDefaultTime] = useState('17:00');
+
   const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
   const todayName = new Date().toLocaleDateString('en-US', { weekday: 'long' });
 
   // --- HELPERS ---
+  
+  // 1. Dropdown Options (Every 30 mins)
   const generateTimeSlots = () => {
     const slots = [];
     for (let hour = 9; hour <= 19; hour++) { 
@@ -42,23 +46,48 @@ const TeacherDashboard = () => {
   };
   const timeSlots = generateTimeSlots();
 
-  const getPreviousSlot = (timeString) => {
-    if (!timeString) return "";
-    const [hStr, mStr] = timeString.split(':');
-    let h = parseInt(hStr);
-    let m = parseInt(mStr);
-    if (m === 30) return `${hStr}:00`;
-    let prevH = h - 1;
-    let prevHStr = prevH < 10 ? `0${prevH}` : `${prevH}`;
-    return `${prevHStr}:30`;
+  // 2. Calendar Rows (1-Hour Intervals Only)
+  const generateCalendarRows = () => {
+    const rows = [];
+    for (let hour = 9; hour <= 19; hour++) { 
+      const formattedHour = hour < 10 ? `0${hour}` : hour;
+      rows.push(`${formattedHour}:00`);
+    }
+    return rows;
+  };
+  const calendarRows = generateCalendarRows();
+
+  const cleanTime = (t) => {
+      if (!t) return "";
+      return t.slice(0, 5); 
   };
 
-  const isSlotOccupied = (day, time) => {
-    const exactMatch = activeRoster.find(s => s.preferred_days?.includes(day) && s.preferred_time?.slice(0,5) === time);
-    if (exactMatch) return exactMatch;
-    const prevTime = getPreviousSlot(time);
-    const overlapMatch = activeRoster.find(s => s.preferred_days?.includes(day) && s.preferred_time?.slice(0,5) === prevTime);
-    return overlapMatch;
+  // Helper to split students into :00 and :30 groups for a specific Hour/Day
+  const getSplitStudents = (day, hourString) => {
+      const slotHour = hourString.split(':')[0]; // "17" from "17:00"
+
+      const studentsInHour = activeRoster.filter(s => {
+          const dayStr = s.preferred_days?.find(d => d.startsWith(day));
+          if (!dayStr) return false;
+          const timePart = cleanTime(dayStr.split(' ')[1]); 
+          if (!timePart) return false;
+          return timePart.split(':')[0] === slotHour;
+      });
+
+      const start00 = [];
+      const start30 = [];
+
+      studentsInHour.forEach(s => {
+          const dayStr = s.preferred_days.find(d => d.startsWith(day));
+          const timePart = cleanTime(dayStr.split(' ')[1]);
+          if (timePart.endsWith('30')) {
+              start30.push(s);
+          } else {
+              start00.push(s);
+          }
+      });
+
+      return { start00, start30 };
   };
 
   const getCourseCategory = (courseId) => {
@@ -140,7 +169,6 @@ const TeacherDashboard = () => {
     }
   };
 
-  // NEW: DELETE STUDENT (Unenroll)
   const handleDeleteStudent = async (enrollmentId, studentName, courseName) => {
       const confirmMsg = `Are you sure you want to remove ${studentName} from ${courseName}?\n\nThis will delete this specific enrollment but keep their profile and history.`;
       if (!window.confirm(confirmMsg)) return;
@@ -156,30 +184,46 @@ const TeacherDashboard = () => {
   const toggleReviewDay = (day) => {
     setReviewingStudent(prev => {
       const currentDays = prev.preferred_days || [];
-      const newDays = currentDays.includes(day) ? currentDays.filter(d => d !== day) : [...currentDays, day];
+      const exists = currentDays.some(d => d.startsWith(day));
+
+      let newDays;
+      if (exists) {
+          newDays = currentDays.filter(d => !d.startsWith(day));
+      } else {
+          if (currentDays.length >= 3) return prev;
+          newDays = [...currentDays, `${day} ${reviewDefaultTime}`];
+      }
       return { ...prev, preferred_days: newDays };
     });
   };
 
+  const updateSlotTime = (dayName, newTime) => {
+      setReviewingStudent(prev => {
+          const newDays = prev.preferred_days.map(d => {
+              if (d.startsWith(dayName)) return `${dayName} ${newTime}`;
+              return d;
+          });
+          return { ...prev, preferred_days: newDays };
+      });
+  };
+
   const handleAcceptApplication = async () => {
     if (!reviewingStudent) return;
-    if (reviewingStudent.preferred_days.length < 2) return alert("Select at least 2 days.");
-
-    const time = reviewingStudent.preferred_time.slice(0, 5);
-    const hasConflict = reviewingStudent.preferred_days.some(day => isSlotOccupied(day, time));
-
-    if (hasConflict) {
-        return alert("Cannot Enroll: Scheduling conflict detected.");
-    }
-
+    
     const { error } = await supabase.from('enrollments')
-        .update({ status: 'active', preferred_time: reviewingStudent.preferred_time, preferred_days: reviewingStudent.preferred_days })
+        .update({ 
+            status: 'active', 
+            preferred_days: reviewingStudent.preferred_days,
+            preferred_time: null 
+        })
         .eq('id', reviewingStudent.id);
 
     if (!error) {
         alert("Enrolled Successfully!");
         setReviewingStudent(null);
         fetchData();
+    } else {
+        alert("Error enrolling: " + error.message);
     }
   };
 
@@ -206,7 +250,6 @@ const TeacherDashboard = () => {
     }
   };
 
-  // --- HELPERS FOR VIEW ---
   const handleBulkReminders = () => {
     let targetStudents = activeRoster.filter(s => !pendingPayments.some(p => p.student_id === s.student.id) && !paidStudentIds.includes(s.student.id));
     const uniqueStudents = []; const seenIds = new Set();
@@ -230,7 +273,7 @@ const TeacherDashboard = () => {
   };
   useEffect(() => { if (showHistory) fetchHistory(); }, [historyDate, showHistory]);
 
-  const todaysStudents = activeRoster.filter(s => s.preferred_days.includes(todayName));
+  const todaysStudents = activeRoster.filter(s => s.preferred_days.some(d => d.includes(todayName)));
   const filteredDirectory = activeRoster.filter(s => {
     const q = searchQuery.toLowerCase();
     return s.student.full_name.toLowerCase().includes(q) || s.courses.name.toLowerCase().includes(q) || getCourseCategory(s.courses.id).toLowerCase().includes(q) || s.preferred_days.some(d => d.toLowerCase().includes(q));
@@ -274,16 +317,9 @@ const TeacherDashboard = () => {
                         <input type="text" placeholder="Search name, day, or instrument..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 outline-none focus:border-indigo-500 transition-all bg-white shadow-sm" />
                     </div>
                     <div className="flex gap-2 flex-wrap">
-                        {/* NEW: Master Schedule Button */}
-                        <button onClick={() => setShowMasterSchedule(true)} className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-indigo-700 flex items-center gap-2 shadow-sm">
-                            <Calendar size={18} /> Schedule
-                        </button>
-                        <button onClick={() => setShowHistory(true)} className="bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg font-bold hover:bg-gray-50 flex items-center gap-2 shadow-sm">
-                            <History size={18} /> History
-                        </button>
-                        <button onClick={handleBulkReminders} className="bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg font-bold hover:bg-gray-50 flex items-center gap-2 shadow-sm">
-                            <Bell size={18} /> Reminders
-                        </button>
+                        <button onClick={() => setShowMasterSchedule(true)} className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-indigo-700 flex items-center gap-2 shadow-sm"><Calendar size={18} /> Schedule</button>
+                        <button onClick={() => setShowHistory(true)} className="bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg font-bold hover:bg-gray-50 flex items-center gap-2 shadow-sm"><History size={18} /> History</button>
+                        <button onClick={handleBulkReminders} className="bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg font-bold hover:bg-gray-50 flex items-center gap-2 shadow-sm"><Bell size={18} /> Reminders</button>
                     </div>
                 </div>
 
@@ -305,12 +341,19 @@ const TeacherDashboard = () => {
                                         <tr><th className="p-4">Time</th><th className="p-4">Student</th><th className="p-4">Course</th><th className="p-4 text-center">Credits</th><th className="p-4 text-center">Status</th></tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100">
-                                        {todaysStudents.sort((a,b) => a.preferred_time.localeCompare(b.preferred_time)).map(student => {
+                                        {todaysStudents.sort((a,b) => (a.preferred_time || '').localeCompare(b.preferred_time || '')).map(student => {
                                             const isPresent = attendanceRecordsToday.some(r => r.student_id === student.student_id && r.reason.includes(student.courses.name));
                                             const balance = studentBalances[student.student_id] || 0;
+                                            
+                                            let displayTime = cleanTime(student.preferred_time);
+                                            const dayMatch = student.preferred_days.find(d => d.includes(todayName));
+                                            if (dayMatch && dayMatch.includes(' ')) {
+                                                displayTime = cleanTime(dayMatch.split(' ')[1]);
+                                            }
+
                                             return (
                                                 <tr key={student.id} className="hover:bg-gray-50 transition-colors">
-                                                    <td className="p-4 font-mono font-bold text-indigo-600">{student.preferred_time}</td>
+                                                    <td className="p-4 font-mono font-bold text-indigo-600">{displayTime}</td>
                                                     <td onClick={() => setViewingStudent(student)} className="p-4 font-bold text-gray-900 cursor-pointer hover:text-indigo-600 hover:underline">{student.student.full_name}</td>
                                                     <td className="p-4 text-gray-500">{student.courses?.name} <span className="text-xs bg-gray-100 px-1 rounded border border-gray-200">{getCourseCategory(student.courses?.id)}</span></td>
                                                     <td className="p-4 text-center"><span className={`px-2 py-1 rounded-full text-xs font-bold ${balance <= 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>{balance}</span></td>
@@ -345,7 +388,6 @@ const TeacherDashboard = () => {
                                             <td className="p-4"><span className={`px-2 py-1 rounded-full text-xs font-bold ${balance <= 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>{balance} Cr</span></td>
                                             <td className="p-4 text-center flex justify-center gap-2">
                                                 <button onClick={() => setViewingStudent(student)} className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded text-xs font-bold">View</button>
-                                                {/* NEW: Delete Button */}
                                                 <button onClick={() => handleDeleteStudent(student.id, student.student.full_name, student.courses.name)} className="bg-red-50 hover:bg-red-100 text-red-600 px-2 py-1 rounded text-xs"><Trash2 size={16}/></button>
                                             </td>
                                         </tr>
@@ -362,7 +404,7 @@ const TeacherDashboard = () => {
         {activeTab === 'payments' && (
             <div className="animate-in fade-in">
                 <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden max-w-3xl mx-auto">
-                    <div className="p-6 bg-orange-50 border-b border-orange-100"><h2 className="font-bold text-xl text-orange-800 flex items-center gap-2">Payment Approvals</h2></div>
+                    <div className="p-6 bg-orange-50 border-b border-orange-100"><h2 className="font-bold text-xl text-orange-800 flex items-center gap-2"><DollarSign/> Payment Approvals</h2></div>
                     {pendingPayments.length === 0 ? <div className="p-12 text-center text-gray-400">No pending payments.</div> : (
                         <div className="divide-y divide-gray-100">
                             {pendingPayments.map(p => (
@@ -386,7 +428,11 @@ const TeacherDashboard = () => {
                             <div key={app.id} className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow relative">
                                 <div className="absolute top-4 right-4 bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-1 rounded uppercase">New</div>
                                 <div className="mb-4"><div className="font-bold text-xl text-gray-900">{app.student.full_name}</div><div className="text-sm text-gray-500">{app.courses.name} ({getCourseCategory(app.courses.id)}) • Age {app.student.age}</div></div>
-                                <div className="bg-gray-50 p-3 rounded border border-gray-100 text-sm mb-6"><span className="font-bold text-gray-600 block mb-1">Requested:</span> {app.preferred_days.join(", ")} <br/> @ {app.preferred_time}</div>
+                                <div className="bg-gray-50 p-3 rounded border border-gray-100 text-sm mb-6">
+                                    <span className="font-bold text-gray-600 block mb-1">Requested:</span> 
+                                    {/* Display New Format Array */}
+                                    {app.preferred_days.map((d, i) => <div key={i}>{d.split(' ')[0]} @ {cleanTime(d.split(' ')[1])}</div>)}
+                                </div>
                                 <div className="flex gap-2"><button onClick={() => setReviewingStudent(app)} className="flex-1 bg-indigo-600 text-white py-3 rounded-lg font-bold text-sm hover:bg-indigo-700 shadow-sm">Review Schedule</button><button onClick={() => handleRejectApplication(app.id)} className="px-4 border border-gray-300 text-gray-500 rounded-lg font-bold hover:bg-white hover:text-red-600"><X size={20}/></button></div>
                             </div>
                         ))}
@@ -396,7 +442,7 @@ const TeacherDashboard = () => {
         )}
       </div>
 
-      {/* --- NEW: MASTER SCHEDULE MODAL --- */}
+      {/* --- MASTER SCHEDULE MODAL (SPLIT-CELL UI) --- */}
       {showMasterSchedule && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 animate-in fade-in">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col p-6 overflow-hidden">
@@ -405,37 +451,41 @@ const TeacherDashboard = () => {
                     <button onClick={() => setShowMasterSchedule(false)} className="text-gray-400 hover:text-black"><X size={24}/></button>
                 </div>
                 <div className="flex-1 overflow-auto border border-gray-200 rounded-lg">
-                    <table className="w-full border-collapse">
+                    <table className="w-full border-collapse table-fixed">
                         <thead className="sticky top-0 bg-gray-100 text-gray-600 text-xs uppercase z-10">
-                            <tr><th className="p-2 border border-gray-300 w-16">Time</th>{daysOfWeek.map(day => <th key={day} className="p-2 border border-gray-300 min-w-[100px]">{day}</th>)}</tr>
+                            <tr>
+                                <th className="p-2 border border-gray-300 w-16">Time</th>
+                                {daysOfWeek.map(day => <th key={day} className="p-2 border border-gray-300 min-w-[100px]">{day}</th>)}
+                            </tr>
                         </thead>
                         <tbody>
-                            {timeSlots.map(time => (
+                            {calendarRows.map(time => (
                                 <tr key={time}>
-                                    <td className="py-1 px-2 border border-gray-300 font-mono text-[10px] bg-gray-50 text-center text-gray-500">{time}</td>
+                                    <td className="py-1 px-2 border border-gray-300 font-mono text-[10px] bg-gray-50 text-center text-gray-500 align-top pt-2">
+                                        {time}
+                                    </td>
                                     {daysOfWeek.map(day => {
-                                        const occupiedBy = isSlotOccupied(day, time);
-                                        let borderClass = "border border-gray-300"; 
-                                        let content = null;
-                                        let cellClass = "bg-white hover:bg-gray-50";
-                                        
-                                        if (occupiedBy) {
-                                            const isStart = occupiedBy.preferred_time?.slice(0,5) === time;
-                                            cellClass = "bg-indigo-100 text-indigo-800 cursor-pointer hover:bg-indigo-200 transition-colors";
-                                            if (isStart) { 
-                                                content = <div className="font-bold text-xs truncate px-1">{occupiedBy.student.full_name}</div>; 
-                                                borderClass = "border-t border-l border-r border-gray-300 border-b-0"; 
-                                            } else { 
-                                                borderClass = "border-b border-l border-r border-gray-300 border-t-0"; 
-                                            }
-                                        }
+                                        const { start00, start30 } = getSplitStudents(day, time);
                                         return (
-                                            <td 
-                                                key={day + time} 
-                                                onClick={() => occupiedBy && setViewingStudent(occupiedBy)} 
-                                                className={`${borderClass} p-1 text-center h-8 relative ${cellClass}`}
-                                            >
-                                                {content}
+                                            <td key={day + time} className="border border-gray-300 h-24 align-top p-0 relative">
+                                                
+                                                {/* TOP HALF (XX:00 starts) */}
+                                                <div className="h-1/2 p-1 overflow-hidden">
+                                                    {start00.map(occ => (
+                                                        <div key={occ.id} onClick={() => setViewingStudent(occ)} className="bg-indigo-100 text-indigo-800 text-[10px] px-1 rounded truncate cursor-pointer hover:bg-indigo-200 border border-indigo-200 mb-1">
+                                                            {occ.student.full_name}
+                                                        </div>
+                                                    ))}
+                                                </div>
+
+                                                {/* BOTTOM HALF (XX:30 starts) - Visual Separation */}
+                                                <div className="h-1/2 p-1 bg-gray-50 border-t border-dotted border-gray-300 overflow-hidden">
+                                                    {start30.map(occ => (
+                                                        <div key={occ.id} onClick={() => setViewingStudent(occ)} className="bg-purple-100 text-purple-800 text-[10px] px-1 rounded truncate cursor-pointer hover:bg-purple-200 border border-purple-200 mb-1">
+                                                            {occ.student.full_name}
+                                                        </div>
+                                                    ))}
+                                                </div>
                                             </td>
                                         );
                                     })}
@@ -448,8 +498,7 @@ const TeacherDashboard = () => {
         </div>
       )}
 
-      {/* --- OTHER MODALS (Review, History, Reminders, Profile) SAME AS BEFORE --- */}
-      {/* 1. Review Modal */}
+      {/* --- REVIEW MODAL (SPLIT-CELL UI) --- */}
       {reviewingStudent && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[90vh] flex flex-col p-6 overflow-hidden">
@@ -457,35 +506,52 @@ const TeacherDashboard = () => {
                     <h2 className="text-2xl font-bold">Scheduling: <span className="text-indigo-600">{reviewingStudent.student.full_name}</span></h2>
                     <button onClick={() => setReviewingStudent(null)} className="text-gray-400 hover:text-black"><X size={24}/></button>
                 </div>
-                <div className="flex-1 overflow-auto border border-gray-200 rounded-lg">
-                    <table className="w-full border-collapse">
+                
+                {/* CALENDAR GRID */}
+                <div className="flex-1 overflow-auto border border-gray-200 rounded-lg mb-4">
+                    <table className="w-full border-collapse table-fixed">
                         <thead className="sticky top-0 bg-gray-100 text-gray-600 text-xs uppercase z-10">
-                            <tr><th className="p-2 border border-gray-300 w-16">Time</th>{daysOfWeek.map(day => <th key={day} className="p-2 border border-gray-300 min-w-[100px]">{day}</th>)}</tr>
+                            <tr>
+                                <th className="p-2 border border-gray-300 w-16">Time</th>
+                                {daysOfWeek.map(day => <th key={day} className="p-2 border border-gray-300 min-w-[100px]">{day}</th>)}
+                            </tr>
                         </thead>
                         <tbody>
-                            {timeSlots.map(time => (
+                            {calendarRows.map(time => (
                                 <tr key={time}>
-                                    <td className="py-1 px-2 border border-gray-300 font-mono text-[10px] bg-gray-50 text-center text-gray-500">{time}</td>
+                                    <td className="py-1 px-2 border border-gray-300 font-mono text-[10px] bg-gray-50 text-center text-gray-500 align-top pt-2">
+                                        {time}
+                                    </td>
                                     {daysOfWeek.map(day => {
-                                        const occupiedBy = isSlotOccupied(day, time);
-                                        const reqStartTime = reviewingStudent.preferred_time?.slice(0,5);
-                                        const isReqStart = reviewingStudent.preferred_days.includes(day) && reqStartTime === time;
-                                        const isReqOverlap = reviewingStudent.preferred_days.includes(day) && reqStartTime === getPreviousSlot(time);
-                                        const isRequested = isReqStart || isReqOverlap;
-                                        let cellClass = "bg-white"; let content = null; let borderClass = "border border-gray-300"; 
-                                        if (occupiedBy) {
-                                            const isStart = occupiedBy.preferred_time?.slice(0,5) === time;
-                                            cellClass = isRequested ? "bg-red-500 text-white" : "bg-blue-100 text-blue-800";
-                                            if (isStart) { content = occupiedBy.student.full_name.split(' ')[0]; borderClass = "border-t border-l border-r border-gray-300 border-b-0"; } 
-                                            else { content = ""; borderClass = "border-b border-l border-r border-gray-300 border-t-0"; }
-                                        } else if (isRequested) {
-                                            cellClass = "bg-green-500 text-white";
-                                            if (isReqStart) { content = "REQUESTED"; borderClass = "border-t border-l border-r border-gray-300 border-b-0"; } 
-                                            else { content = ""; borderClass = "border-b border-l border-r border-gray-300 border-t-0"; }
-                                        }
+                                        const { start00, start30 } = getSplitStudents(day, time);
+                                        
+                                        // Check Requests
+                                        const req00 = reviewingStudent.preferred_days.includes(`${day} ${time}`);
+                                        const slotHour = time.split(':')[0];
+                                        const req30 = reviewingStudent.preferred_days.includes(`${day} ${slotHour}:30`);
+
                                         return (
-                                            <td key={day + time} onClick={() => occupiedBy && setViewingStudent(occupiedBy)} className={`${borderClass} p-1 text-center h-8 relative group ${cellClass} ${occupiedBy ? 'cursor-pointer hover:opacity-90' : ''}`}>
-                                                <div className="truncate font-bold text-xs">{content}</div>
+                                            <td key={day + time} className="border border-gray-300 h-24 align-top p-0 relative">
+                                                
+                                                {/* TOP HALF (:00) */}
+                                                <div className={`h-1/2 p-1 overflow-hidden ${req00 ? 'bg-green-100 border-l-4 border-green-500' : ''}`}>
+                                                    {start00.map(occ => (
+                                                        <div key={occ.id} className="bg-indigo-100 text-indigo-800 text-[10px] px-1 rounded truncate mb-1 border border-indigo-200">
+                                                            {occ.student.full_name}
+                                                        </div>
+                                                    ))}
+                                                    {req00 && <div className="text-[9px] font-bold text-green-700 uppercase tracking-wide">Requested</div>}
+                                                </div>
+
+                                                {/* BOTTOM HALF (:30) */}
+                                                <div className={`h-1/2 p-1 bg-gray-50 border-t border-dotted border-gray-300 overflow-hidden ${req30 ? 'bg-green-100 border-l-4 border-green-500' : ''}`}>
+                                                    {start30.map(occ => (
+                                                        <div key={occ.id} className="bg-purple-100 text-purple-800 text-[10px] px-1 rounded truncate mb-1 border border-purple-200">
+                                                            {occ.student.full_name}
+                                                        </div>
+                                                    ))}
+                                                    {req30 && <div className="text-[9px] font-bold text-green-700 uppercase tracking-wide">Requested</div>}
+                                                </div>
                                             </td>
                                         );
                                     })}
@@ -494,55 +560,69 @@ const TeacherDashboard = () => {
                         </tbody>
                     </table>
                 </div>
-                <div className="mt-4 flex flex-col xl:flex-row justify-between items-center gap-4 bg-gray-50 p-4 rounded-lg shrink-0 border-t border-gray-200">
-                    <div className="flex gap-2">
-                         {daysOfWeek.map(day => (
-                            <button key={day} onClick={() => (!reviewingStudent.preferred_days.length >= 3 || reviewingStudent.preferred_days.includes(day)) && toggleReviewDay(day)} disabled={reviewingStudent.preferred_days.length >= 3 && !reviewingStudent.preferred_days.includes(day)} className={`px-2 py-1 text-xs font-bold rounded border ${reviewingStudent.preferred_days.includes(day) ? 'bg-indigo-600 text-white' : 'bg-white'}`}>{day.slice(0,3)}</button>
-                         ))}
+                
+                {/* CONTROLS */}
+                <div className="mt-auto bg-gray-50 p-4 rounded-lg border-t border-gray-200 space-y-4">
+                    
+                    {/* List of Selected Slots */}
+                    <div className="flex flex-wrap gap-2">
+                        {reviewingStudent.preferred_days.map((dayStr, idx) => {
+                            const [dayName, rawTime] = dayStr.split(' ');
+                            const cleanTimeVal = cleanTime(rawTime); 
+                            return (
+                                <div key={idx} className="bg-white border border-indigo-200 rounded px-2 py-1 flex items-center gap-2 shadow-sm">
+                                    <span className="font-bold text-xs text-indigo-900">{dayName}</span>
+                                    <select 
+                                        value={cleanTimeVal} 
+                                        onChange={(e) => updateSlotTime(dayName, e.target.value)}
+                                        className="text-xs border rounded bg-gray-50 p-1 font-mono"
+                                    >
+                                        {timeSlots.map(t => <option key={t} value={t}>{t}</option>)}
+                                    </select>
+                                    <button onClick={() => toggleReviewDay(dayName)} className="text-red-400 hover:text-red-600"><X size={14}/></button>
+                                </div>
+                            );
+                        })}
                     </div>
-                    <div className="flex gap-2">
-                        <select value={reviewingStudent.preferred_time} onChange={(e) => setReviewingStudent({...reviewingStudent, preferred_time: e.target.value})} className="border rounded px-4 py-2 font-bold bg-white text-gray-800">
-                            {timeSlots.map(t => <option key={t} value={t}>{t}</option>)}
-                        </select>
-                        <button onClick={handleAcceptApplication} className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold">Enroll</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-      )}
 
-      {showHistory && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6">
-                <div className="flex justify-between items-center mb-4"><h2 className="text-xl font-bold">History</h2><button onClick={() => setShowHistory(false)}><X/></button></div>
-                <input type="date" value={historyDate} onChange={(e) => setHistoryDate(e.target.value)} className="w-full border p-2 rounded mb-4"/>
-                <div className="max-h-64 overflow-y-auto space-y-2">
-                    {historyRecords.length === 0 ? <div className="text-center text-gray-400 p-4">No classes recorded.</div> : historyRecords.map(r => {
-                        const parts = r.reason.split(':'); const instrument = parts[1] ? parts[1].trim() : null;
-                        return (<div key={r.id} className="p-3 bg-gray-50 border-l-4 border-indigo-500 flex justify-between items-center"><div><span className="font-bold block">{r.student.full_name}</span>{instrument && <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full uppercase">{instrument}</span>}</div><span className="text-sm text-gray-500">{new Date(r.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span></div>)
-                    })}
-                </div>
-            </div>
-        </div>
-      )}
-
-      {showReminderModal && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 relative">
-                <button onClick={() => setShowReminderModal(false)} className="absolute top-4 right-4 text-gray-400"><X size={28}/></button>
-                <h2 className="text-2xl font-bold mb-4">Send Reminders</h2>
-                <div className="bg-gray-50 rounded-lg border border-gray-200 max-h-96 overflow-y-auto p-2">
-                    {reminderTargets.map((student, index) => (
-                        <div key={student.id} className="flex justify-between items-center bg-white p-3 mb-2 rounded border border-gray-100 shadow-sm">
-                            <div className="font-bold">{student.student.full_name}</div>
-                            {student.sent ? <span className="text-gray-400 font-bold text-sm">Done</span> : <button onClick={() => handleSendReminder(index, student)} className="bg-green-500 text-white px-3 py-1 rounded text-sm font-bold">Send</button>}
+                    {/* Add New Days */}
+                    <div className="flex flex-col md:flex-row justify-between items-center gap-4 border-t border-gray-200 pt-4">
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-gray-500 uppercase">Add Day:</span>
+                            {daysOfWeek.map(day => {
+                                const isActive = reviewingStudent.preferred_days.some(d => d.startsWith(day));
+                                return (
+                                    <button 
+                                        key={day} 
+                                        onClick={() => !isActive && toggleReviewDay(day)}
+                                        disabled={isActive || reviewingStudent.preferred_days.length >= 3} 
+                                        className={`px-2 py-1 text-xs font-bold rounded border ${isActive ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-white hover:border-indigo-500 text-gray-700'}`}
+                                    >
+                                        {day.slice(0,3)}
+                                    </button>
+                                );
+                            })}
+                            
+                            <span className="text-xs font-bold text-gray-500 uppercase ml-2">@ Time:</span>
+                            <select 
+                                value={reviewDefaultTime} 
+                                onChange={(e) => setReviewDefaultTime(e.target.value)} 
+                                className="border rounded px-2 py-1 text-xs font-bold bg-white text-gray-800"
+                            >
+                                {timeSlots.map(t => <option key={t} value={t}>{t}</option>)}
+                            </select>
                         </div>
-                    ))}
+
+                        <button onClick={handleAcceptApplication} className="bg-indigo-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-indigo-700 shadow-lg">Confirm Enrollment</button>
+                    </div>
                 </div>
             </div>
         </div>
       )}
 
+      {/* --- HISTORY & REMINDER & PROFILE MODALS (Same as before) --- */}
+      {showHistory && (<div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"><div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6"><div className="flex justify-between items-center mb-4"><h2 className="text-xl font-bold">History</h2><button onClick={() => setShowHistory(false)}><X/></button></div><input type="date" value={historyDate} onChange={(e) => setHistoryDate(e.target.value)} className="w-full border p-2 rounded mb-4"/><div className="max-h-64 overflow-y-auto space-y-2">{historyRecords.length === 0 ? <div className="text-center text-gray-400 p-4">No classes recorded.</div> : historyRecords.map(r => { const parts = r.reason.split(':'); const instrument = parts[1] ? parts[1].trim() : null; return (<div key={r.id} className="p-3 bg-gray-50 border-l-4 border-indigo-500 flex justify-between items-center"><div><span className="font-bold block">{r.student.full_name}</span>{instrument && <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full uppercase">{instrument}</span>}</div><span className="text-sm text-gray-500">{new Date(r.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span></div>) })}</div></div></div>)}
+      {showReminderModal && (<div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50"><div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 relative"><button onClick={() => setShowReminderModal(false)} className="absolute top-4 right-4 text-gray-400"><X size={28}/></button><h2 className="text-2xl font-bold mb-4">Send Reminders</h2><div className="bg-gray-50 rounded-lg border border-gray-200 max-h-96 overflow-y-auto p-2">{reminderTargets.map((student, index) => (<div key={student.id} className="flex justify-between items-center bg-white p-3 mb-2 rounded border border-gray-100 shadow-sm"><div className="font-bold">{student.student.full_name}</div>{student.sent ? <span className="text-gray-400 font-bold text-sm">Done</span> : <button onClick={() => handleSendReminder(index, student)} className="bg-green-500 text-white px-3 py-1 rounded text-sm font-bold">Send</button>}</div>))}</div></div></div>)}
       {viewingStudent && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 animate-in fade-in">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden relative">
@@ -576,7 +656,6 @@ const TeacherDashboard = () => {
                         <p><span className="font-semibold">Instrument:</span> {viewingStudent.courses?.name}</p>
                         <p><span className="font-semibold">Type:</span> {getCourseCategory(viewingStudent.courses?.id)}</p>
                         <p><span className="font-semibold">Schedule:</span> {viewingStudent.preferred_days?.join(" & ")}</p>
-                        <p><span className="font-semibold">Time:</span> {viewingStudent.preferred_time}</p>
                     </div>
                 </div>
                 <div className="pt-2 flex flex-col gap-3">
