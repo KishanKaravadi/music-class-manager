@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { 
-  Users, DollarSign, Calendar, CheckCircle, X, Bell, Trash2,
+  Users, Calendar, CheckCircle, X, Bell, Trash2,
   History, MessageCircle, User, Search, LayoutDashboard, CreditCard, UserPlus
 } from 'lucide-react';
 
@@ -442,7 +442,7 @@ const TeacherDashboard = () => {
         )}
       </div>
 
-      {/* --- MASTER SCHEDULE MODAL (SPLIT-CELL UI) --- */}
+      {/* --- MASTER SCHEDULE MODAL (DYNAMIC ROWS) --- */}
       {showMasterSchedule && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 animate-in fade-in">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col p-6 overflow-hidden">
@@ -467,10 +467,10 @@ const TeacherDashboard = () => {
                                     {daysOfWeek.map(day => {
                                         const { start00, start30 } = getSplitStudents(day, time);
                                         return (
-                                            <td key={day + time} className="border border-gray-300 h-24 align-top p-0 relative">
+                                            <td key={day + time} className="border border-gray-300 align-top p-0 relative h-auto">
                                                 
                                                 {/* TOP HALF (XX:00 starts) */}
-                                                <div className="h-1/2 p-1 overflow-hidden">
+                                                <div className="min-h-[40px] p-1">
                                                     {start00.map(occ => (
                                                         <div key={occ.id} onClick={() => setViewingStudent(occ)} className="bg-indigo-100 text-indigo-800 text-[10px] px-1 rounded truncate cursor-pointer hover:bg-indigo-200 border border-indigo-200 mb-1">
                                                             {occ.student.full_name}
@@ -479,7 +479,7 @@ const TeacherDashboard = () => {
                                                 </div>
 
                                                 {/* BOTTOM HALF (XX:30 starts) - Visual Separation */}
-                                                <div className="h-1/2 p-1 bg-gray-50 border-t border-dotted border-gray-300 overflow-hidden">
+                                                <div className="min-h-[40px] p-1 bg-gray-50 border-t border-dotted border-gray-300">
                                                     {start30.map(occ => (
                                                         <div key={occ.id} onClick={() => setViewingStudent(occ)} className="bg-purple-100 text-purple-800 text-[10px] px-1 rounded truncate cursor-pointer hover:bg-purple-200 border border-purple-200 mb-1">
                                                             {occ.student.full_name}
@@ -498,7 +498,7 @@ const TeacherDashboard = () => {
         </div>
       )}
 
-      {/* --- REVIEW MODAL (SPLIT-CELL UI) --- */}
+      {/* --- REVIEW MODAL (DYNAMIC ROWS) --- */}
       {reviewingStudent && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[90vh] flex flex-col p-6 overflow-hidden">
@@ -531,10 +531,10 @@ const TeacherDashboard = () => {
                                         const req30 = reviewingStudent.preferred_days.includes(`${day} ${slotHour}:30`);
 
                                         return (
-                                            <td key={day + time} className="border border-gray-300 h-24 align-top p-0 relative">
+                                            <td key={day + time} className="border border-gray-300 align-top p-0 relative h-auto">
                                                 
                                                 {/* TOP HALF (:00) */}
-                                                <div className={`h-1/2 p-1 overflow-hidden ${req00 ? 'bg-green-100 border-l-4 border-green-500' : ''}`}>
+                                                <div className={`min-h-[40px] p-1 ${req00 ? 'bg-green-100 border-l-4 border-green-500' : ''}`}>
                                                     {start00.map(occ => (
                                                         <div key={occ.id} className="bg-indigo-100 text-indigo-800 text-[10px] px-1 rounded truncate mb-1 border border-indigo-200">
                                                             {occ.student.full_name}
@@ -544,7 +544,7 @@ const TeacherDashboard = () => {
                                                 </div>
 
                                                 {/* BOTTOM HALF (:30) */}
-                                                <div className={`h-1/2 p-1 bg-gray-50 border-t border-dotted border-gray-300 overflow-hidden ${req30 ? 'bg-green-100 border-l-4 border-green-500' : ''}`}>
+                                                <div className={`min-h-[40px] p-1 bg-gray-50 border-t border-dotted border-gray-300 ${req30 ? 'bg-green-100 border-l-4 border-green-500' : ''}`}>
                                                     {start30.map(occ => (
                                                         <div key={occ.id} className="bg-purple-100 text-purple-800 text-[10px] px-1 rounded truncate mb-1 border border-purple-200">
                                                             {occ.student.full_name}
