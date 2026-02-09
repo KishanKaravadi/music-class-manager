@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { 
-  Users, Calendar, CheckCircle, X, Bell, Trash2,
-  History, MessageCircle, User, Search, LayoutDashboard, CreditCard, UserPlus
+  Users, DollarSign, Calendar, CheckCircle, X, Bell, Trash2,
+  History, MessageCircle, User, Search, LayoutDashboard, CreditCard, UserPlus, RefreshCw
 } from 'lucide-react';
 
 const TeacherDashboard = () => {
@@ -18,7 +18,7 @@ const TeacherDashboard = () => {
   const [searchQuery, setSearchQuery] = useState('');
   
   // Modals
-  const [reviewingStudent, setReviewingStudent] = useState(null);
+  const [reviewingStudent, setReviewingStudent] = useState(null); // Now handles Swaps too
   const [viewingStudent, setViewingStudent] = useState(null);
   const [showMasterSchedule, setShowMasterSchedule] = useState(false); 
   const [reminderTargets, setReminderTargets] = useState([]);
@@ -33,8 +33,6 @@ const TeacherDashboard = () => {
   const todayName = new Date().toLocaleDateString('en-US', { weekday: 'long' });
 
   // --- HELPERS ---
-  
-  // 1. Dropdown Options (Every 30 mins)
   const generateTimeSlots = () => {
     const slots = [];
     for (let hour = 9; hour <= 19; hour++) { 
@@ -46,7 +44,6 @@ const TeacherDashboard = () => {
   };
   const timeSlots = generateTimeSlots();
 
-  // 2. Calendar Rows (1-Hour Intervals Only)
   const generateCalendarRows = () => {
     const rows = [];
     for (let hour = 9; hour <= 19; hour++) { 
@@ -62,9 +59,8 @@ const TeacherDashboard = () => {
       return t.slice(0, 5); 
   };
 
-  // Helper to split students into :00 and :30 groups for a specific Hour/Day
   const getSplitStudents = (day, hourString) => {
-      const slotHour = hourString.split(':')[0]; // "17" from "17:00"
+      const slotHour = hourString.split(':')[0]; 
 
       const studentsInHour = activeRoster.filter(s => {
           const dayStr = s.preferred_days?.find(d => d.startsWith(day));
@@ -207,9 +203,16 @@ const TeacherDashboard = () => {
       });
   };
 
+  // --- STANDARD ENROLLMENT ---
   const handleAcceptApplication = async () => {
     if (!reviewingStudent) return;
     
+    // Check if this is a SWAP (Reschedule)
+    if (reviewingStudent.swapOldId) {
+        handleSwapSchedule();
+        return;
+    }
+
     const { error } = await supabase.from('enrollments')
         .update({ 
             status: 'active', 
@@ -225,6 +228,37 @@ const TeacherDashboard = () => {
     } else {
         alert("Error enrolling: " + error.message);
     }
+  };
+
+  // --- SMART SWAP (RESCHEDULE) ---
+  const handleSwapSchedule = async () => {
+      const oldId = reviewingStudent.swapOldId;
+      const newId = reviewingStudent.id;
+
+      if (!oldId || !newId) return alert("Swap Error: Missing ID");
+
+      // 1. Activate NEW
+      const { error: activeError } = await supabase.from('enrollments')
+        .update({ 
+            status: 'active', 
+            preferred_days: reviewingStudent.preferred_days,
+            preferred_time: null 
+        })
+        .eq('id', newId);
+      
+      if (activeError) return alert("Error Activating New: " + activeError.message);
+
+      // 2. Delete OLD
+      const { error: deleteError } = await supabase.from('enrollments').delete().eq('id', oldId);
+
+      if (deleteError) {
+          alert("Warning: New schedule active, but failed to delete old one. Please delete manually.");
+      } else {
+          alert("Schedule Rescheduled Successfully! (Old slot removed)");
+      }
+      
+      setReviewingStudent(null);
+      fetchData();
   };
 
   const handleMarkAttendance = async (enrollment) => {
@@ -308,6 +342,7 @@ const TeacherDashboard = () => {
 
       <div className="max-w-7xl mx-auto p-4 space-y-8 mt-4">
         
+        {/* DASHBOARD TAB */}
         {activeTab === 'dashboard' && (
             <div className="space-y-8 animate-in fade-in">
                 {/* Header Actions */}
@@ -400,11 +435,11 @@ const TeacherDashboard = () => {
             </div>
         )}
 
-        {/* PAYMENTS & APPLICATIONS TABS (Same as before) */}
+        {/* PAYMENTS TAB */}
         {activeTab === 'payments' && (
             <div className="animate-in fade-in">
                 <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden max-w-3xl mx-auto">
-                    <div className="p-6 bg-orange-50 border-b border-orange-100"><h2 className="font-bold text-xl text-orange-800 flex items-center gap-2">Payment Approvals</h2></div>
+                    <div className="p-6 bg-orange-50 border-b border-orange-100"><h2 className="font-bold text-xl text-orange-800 flex items-center gap-2"><DollarSign/> Payment Approvals</h2></div>
                     {pendingPayments.length === 0 ? <div className="p-12 text-center text-gray-400">No pending payments.</div> : (
                         <div className="divide-y divide-gray-100">
                             {pendingPayments.map(p => (
@@ -419,23 +454,59 @@ const TeacherDashboard = () => {
             </div>
         )}
 
+        {/* APPLICATIONS TAB (SMART DETECTION) */}
         {activeTab === 'applications' && (
              <div className="animate-in fade-in">
-                 <h2 className="font-bold text-2xl mb-6 text-gray-800">New Applications</h2>
+                 <h2 className="font-bold text-2xl mb-6 text-gray-800">New Applications & Requests</h2>
                  {pendingApplications.length === 0 ? <div className="bg-white p-12 rounded-2xl border border-gray-200 text-center text-gray-400">No new student applications.</div> : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {pendingApplications.map(app => (
-                            <div key={app.id} className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow relative">
-                                <div className="absolute top-4 right-4 bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-1 rounded uppercase">New</div>
-                                <div className="mb-4"><div className="font-bold text-xl text-gray-900">{app.student.full_name}</div><div className="text-sm text-gray-500">{app.courses.name} ({getCourseCategory(app.courses.id)}) • Age {app.student.age}</div></div>
-                                <div className="bg-gray-50 p-3 rounded border border-gray-100 text-sm mb-6">
-                                    <span className="font-bold text-gray-600 block mb-1">Requested:</span> 
-                                    {/* Display New Format Array */}
-                                    {app.preferred_days.map((d, i) => <div key={i}>{d.split(' ')[0]} @ {cleanTime(d.split(' ')[1])}</div>)}
+                        {pendingApplications.map(app => {
+                            // SMART DETECTION LOGIC
+                            const existingEnrollment = activeRoster.find(r => r.student_id === app.student_id && r.course_id === app.course_id);
+                            const isSwap = !!existingEnrollment;
+
+                            return (
+                                <div key={app.id} className={`bg-white p-6 rounded-xl border shadow-sm hover:shadow-md transition-shadow relative ${isSwap ? 'border-indigo-200' : 'border-gray-200'}`}>
+                                    {isSwap && <div className="absolute top-0 left-0 w-full h-1 bg-indigo-500 rounded-t-xl"></div>}
+                                    
+                                    <div className={`absolute top-4 right-4 text-[10px] font-bold px-2 py-1 rounded uppercase ${isSwap ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700'}`}>
+                                        {isSwap ? 'Reschedule' : 'New Student'}
+                                    </div>
+
+                                    <div className="mb-4">
+                                        <div className="font-bold text-xl text-gray-900">{app.student.full_name}</div>
+                                        <div className="text-sm text-gray-500">{app.courses.name} ({getCourseCategory(app.courses.id)}) • Age {app.student.age}</div>
+                                    </div>
+
+                                    {/* REQUESTED SCHEDULE */}
+                                    <div className="bg-gray-50 p-3 rounded border border-gray-100 text-sm mb-2">
+                                        <span className="font-bold text-gray-600 block mb-1">Requested:</span> 
+                                        {app.preferred_days.map((d, i) => <div key={i} className="text-indigo-600 font-bold">{cleanTime(d.split(' ')[1]) ? `${d.split(' ')[0]} @ ${cleanTime(d.split(' ')[1])}` : d}</div>)}
+                                    </div>
+
+                                    {/* IF SWAP: SHOW CURRENT SCHEDULE */}
+                                    {isSwap && (
+                                        <div className="bg-red-50 p-3 rounded border border-red-100 text-sm mb-4">
+                                            <span className="font-bold text-red-600 block mb-1">Current (Will Drop):</span> 
+                                            {existingEnrollment.preferred_days.map((d, i) => <div key={i} className="text-red-500">{cleanTime(d.split(' ')[1]) ? `${d.split(' ')[0]} @ ${cleanTime(d.split(' ')[1])}` : d}</div>)}
+                                        </div>
+                                    )}
+
+                                    <div className="flex gap-2 mt-4">
+                                        <button 
+                                            onClick={() => setReviewingStudent(isSwap ? { ...app, swapOldId: existingEnrollment.id } : app)} 
+                                            className={`flex-1 text-white py-3 rounded-lg font-bold text-sm shadow-sm transition-colors ${isSwap ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-blue-600 hover:bg-blue-700'}`}
+                                        >
+                                            {isSwap ? 'Review & Swap' : 'Review Schedule'}
+                                        </button>
+                                        
+                                        <button onClick={() => handleRejectApplication(app.id)} className="px-4 border border-gray-300 text-gray-500 rounded-lg font-bold hover:bg-white hover:text-red-600">
+                                            <X size={20}/>
+                                        </button>
+                                    </div>
                                 </div>
-                                <div className="flex gap-2"><button onClick={() => setReviewingStudent(app)} className="flex-1 bg-indigo-600 text-white py-3 rounded-lg font-bold text-sm hover:bg-indigo-700 shadow-sm">Review Schedule</button><button onClick={() => handleRejectApplication(app.id)} className="px-4 border border-gray-300 text-gray-500 rounded-lg font-bold hover:bg-white hover:text-red-600"><X size={20}/></button></div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
                  )}
              </div>
@@ -468,8 +539,6 @@ const TeacherDashboard = () => {
                                         const { start00, start30 } = getSplitStudents(day, time);
                                         return (
                                             <td key={day + time} className="border border-gray-300 align-top p-0 relative h-auto">
-                                                
-                                                {/* TOP HALF (XX:00 starts) */}
                                                 <div className="min-h-[40px] p-1">
                                                     {start00.map(occ => (
                                                         <div key={occ.id} onClick={() => setViewingStudent(occ)} className="bg-indigo-100 text-indigo-800 text-[10px] px-1 rounded truncate cursor-pointer hover:bg-indigo-200 border border-indigo-200 mb-1">
@@ -477,8 +546,6 @@ const TeacherDashboard = () => {
                                                         </div>
                                                     ))}
                                                 </div>
-
-                                                {/* BOTTOM HALF (XX:30 starts) - Visual Separation */}
                                                 <div className="min-h-[40px] p-1 bg-gray-50 border-t border-dotted border-gray-300">
                                                     {start30.map(occ => (
                                                         <div key={occ.id} onClick={() => setViewingStudent(occ)} className="bg-purple-100 text-purple-800 text-[10px] px-1 rounded truncate cursor-pointer hover:bg-purple-200 border border-purple-200 mb-1">
@@ -498,12 +565,15 @@ const TeacherDashboard = () => {
         </div>
       )}
 
-      {/* --- REVIEW MODAL (DYNAMIC ROWS) --- */}
+      {/* --- REVIEW MODAL (HANDLES BOTH NEW & SWAP) --- */}
       {reviewingStudent && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[90vh] flex flex-col p-6 overflow-hidden">
                 <div className="flex justify-between items-center mb-4 shrink-0">
-                    <h2 className="text-2xl font-bold">Scheduling: <span className="text-indigo-600">{reviewingStudent.student.full_name}</span></h2>
+                    <h2 className="text-2xl font-bold">
+                        {reviewingStudent.swapOldId ? 'Rescheduling: ' : 'Enrolling: '} 
+                        <span className="text-indigo-600">{reviewingStudent.student.full_name}</span>
+                    </h2>
                     <button onClick={() => setReviewingStudent(null)} className="text-gray-400 hover:text-black"><X size={24}/></button>
                 </div>
                 
@@ -525,15 +595,12 @@ const TeacherDashboard = () => {
                                     {daysOfWeek.map(day => {
                                         const { start00, start30 } = getSplitStudents(day, time);
                                         
-                                        // Check Requests
                                         const req00 = reviewingStudent.preferred_days.includes(`${day} ${time}`);
                                         const slotHour = time.split(':')[0];
                                         const req30 = reviewingStudent.preferred_days.includes(`${day} ${slotHour}:30`);
 
                                         return (
                                             <td key={day + time} className="border border-gray-300 align-top p-0 relative h-auto">
-                                                
-                                                {/* TOP HALF (:00) */}
                                                 <div className={`min-h-[40px] p-1 ${req00 ? 'bg-green-100 border-l-4 border-green-500' : ''}`}>
                                                     {start00.map(occ => (
                                                         <div key={occ.id} className="bg-indigo-100 text-indigo-800 text-[10px] px-1 rounded truncate mb-1 border border-indigo-200">
@@ -542,8 +609,6 @@ const TeacherDashboard = () => {
                                                     ))}
                                                     {req00 && <div className="text-[9px] font-bold text-green-700 uppercase tracking-wide">Requested</div>}
                                                 </div>
-
-                                                {/* BOTTOM HALF (:30) */}
                                                 <div className={`min-h-[40px] p-1 bg-gray-50 border-t border-dotted border-gray-300 ${req30 ? 'bg-green-100 border-l-4 border-green-500' : ''}`}>
                                                     {start30.map(occ => (
                                                         <div key={occ.id} className="bg-purple-100 text-purple-800 text-[10px] px-1 rounded truncate mb-1 border border-purple-200">
@@ -563,8 +628,6 @@ const TeacherDashboard = () => {
                 
                 {/* CONTROLS */}
                 <div className="mt-auto bg-gray-50 p-4 rounded-lg border-t border-gray-200 space-y-4">
-                    
-                    {/* List of Selected Slots */}
                     <div className="flex flex-wrap gap-2">
                         {reviewingStudent.preferred_days.map((dayStr, idx) => {
                             const [dayName, rawTime] = dayStr.split(' ');
@@ -585,7 +648,6 @@ const TeacherDashboard = () => {
                         })}
                     </div>
 
-                    {/* Add New Days */}
                     <div className="flex flex-col md:flex-row justify-between items-center gap-4 border-t border-gray-200 pt-4">
                         <div className="flex items-center gap-2">
                             <span className="text-xs font-bold text-gray-500 uppercase">Add Day:</span>
@@ -602,7 +664,6 @@ const TeacherDashboard = () => {
                                     </button>
                                 );
                             })}
-                            
                             <span className="text-xs font-bold text-gray-500 uppercase ml-2">@ Time:</span>
                             <select 
                                 value={reviewDefaultTime} 
@@ -613,7 +674,14 @@ const TeacherDashboard = () => {
                             </select>
                         </div>
 
-                        <button onClick={handleAcceptApplication} className="bg-indigo-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-indigo-700 shadow-lg">Confirm Enrollment</button>
+                        {/* BUTTON CHANGES BASED ON TYPE */}
+                        <button 
+                            onClick={handleAcceptApplication} 
+                            className={`px-6 py-2 rounded-lg font-bold text-white shadow-lg transition-all flex items-center gap-2 ${reviewingStudent.swapOldId ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-green-600 hover:bg-green-700'}`}
+                        >
+                            {reviewingStudent.swapOldId ? <RefreshCw size={18}/> : <CheckCircle size={18}/>}
+                            {reviewingStudent.swapOldId ? 'Confirm Reschedule (Swap)' : 'Confirm Enrollment'}
+                        </button>
                     </div>
                 </div>
             </div>

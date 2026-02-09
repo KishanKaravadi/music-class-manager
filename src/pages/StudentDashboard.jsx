@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import PaymentCard from '../components/PaymentCard';
-import { Clock, Calendar, TrendingUp, Lock, DollarSign, Plus, X, Music, CheckCircle, Trash2 } from 'lucide-react';
+import { 
+  Clock, Calendar, TrendingUp, Lock, DollarSign, Plus, X, Music, 
+  CheckCircle, Trash2, ArrowRight, RefreshCw, AlertCircle, Settings, Key, LogOut
+} from 'lucide-react';
 
 const StudentDashboard = ({ session }) => {
   // Stats State
-  const [balance, setBalance] = useState(0); // Kept for internal status logic, not displayed
+  const [balance, setBalance] = useState(0); 
   const [history, setHistory] = useState([]);
   const [classesThisMonth, setClassesThisMonth] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -18,11 +21,19 @@ const StudentDashboard = ({ session }) => {
   const [enrollments, setEnrollments] = useState([]); 
   const [showEnrollModal, setShowEnrollModal] = useState(false);
   
-  // NEW: Scheduler State for "Add Course" Modal
-  const [courseId, setCourseId] = useState('1'); // Default to Piano
+  // Scheduler State for Modal
+  const [courseId, setCourseId] = useState(''); 
   const [currentSchedule, setCurrentSchedule] = useState([]);
   const [tempDay, setTempDay] = useState('Monday');
   const [tempTime, setTempTime] = useState('17:00');
+  
+  // State to track if we are rescheduling (locking the instrument)
+  const [isRescheduling, setIsRescheduling] = useState(false);
+
+  // Change Password State
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [passwordLoading, setPasswordLoading] = useState(false);
 
   const daysOptions = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
   
@@ -47,6 +58,14 @@ const StudentDashboard = ({ session }) => {
     return `${displayHour}:${min} ${ampm}`;
   };
 
+  const getInstrumentName = (id) => {
+      const map = {
+          '1': 'Piano', '4': 'Guitar', '6': 'Keyboard (Western)',
+          '2': 'Violin', '3': 'Vocal', '5': 'Veena', '7': 'Keyboard (Carnatic)'
+      };
+      return map[id] || 'Unknown';
+  };
+
   useEffect(() => { fetchDashboardData(); }, []);
 
   const fetchDashboardData = async () => {
@@ -66,7 +85,7 @@ const StudentDashboard = ({ session }) => {
 
     if (ledgerData) {
       const currentBalance = ledgerData.reduce((acc, curr) => acc + curr.amount, 0);
-      setBalance(currentBalance); // Stored but hidden from view
+      setBalance(currentBalance); 
       
       const attendanceRecords = ledgerData.filter(item => item.amount < 0);
       setHistory(attendanceRecords);
@@ -83,18 +102,83 @@ const StudentDashboard = ({ session }) => {
     setLoading(false);
   };
 
-  // --- HANDLERS ---
+  // --- ACTIONS ---
 
-  // Add Slot to temporary schedule builder
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    window.location.href = '/'; // Force redirect to login
+  };
+
+  // Drop Course with Confirmation
+  const handleDropCourse = async (enrollmentId, courseName) => {
+      const confirmed = window.confirm(`Are you sure you want to drop ${courseName}? \n\nYou will lose your current schedule slot immediately.`);
+      if (!confirmed) return;
+
+      const { error } = await supabase.from('enrollments').delete().eq('id', enrollmentId);
+      
+      if (error) {
+          console.error("Drop Error:", error);
+          alert("Error dropping course: " + error.message);
+      } else {
+          alert("Course dropped successfully.");
+          fetchDashboardData();
+      }
+  };
+
+  // Cancel PENDING Request
+  const handleCancelRequest = async (enrollmentId) => {
+      const confirmed = window.confirm("Do you want to cancel this pending request?");
+      if (!confirmed) return;
+
+      const { error } = await supabase.from('enrollments').delete().eq('id', enrollmentId);
+      
+      if (error) {
+          console.error("Cancel Error:", error);
+          alert("Error cancelling request: " + error.message);
+      } else {
+          fetchDashboardData();
+      }
+  };
+
+  // Reschedule (Open Modal in "Locked" Mode)
+  const handleRescheduleClick = (courseId) => {
+      setCourseId(String(courseId)); // Lock to this ID
+      setIsRescheduling(true);       // Set mode
+      setCurrentSchedule([]);        // Clear previous entries
+      setShowEnrollModal(true);
+  };
+
+  // Open Normal Add Modal (Unlocked)
+  const handleAddClick = () => {
+      setCourseId('');       // Reset to empty
+      setIsRescheduling(false); // Normal mode
+      setCurrentSchedule([]);
+      setShowEnrollModal(true);
+  };
+
+  // Update Password
+  const handleChangePassword = async () => {
+      if (newPassword.length < 6) return alert("Password must be at least 6 characters.");
+      setPasswordLoading(true);
+
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+
+      if (error) {
+          alert("Error updating password: " + error.message);
+      } else {
+          alert("Password updated successfully!");
+          setShowPasswordModal(false);
+          setNewPassword('');
+      }
+      setPasswordLoading(false);
+  };
+
+  // Modal Handlers
   const handleAddSlot = () => {
-      // Check for duplicate day
-      if (currentSchedule.some(s => s.day === tempDay)) {
-          return alert(`You already have a slot on ${tempDay}.`);
-      }
-      // Max 3 days constraint
-      if (currentSchedule.length >= 3) {
-          return alert("You can select a maximum of 3 days.");
-      }
+      if (!courseId) return alert("Please select an instrument first.");
+      if (currentSchedule.some(s => s.day === tempDay)) return alert(`You already have a slot on ${tempDay}.`);
+      if (currentSchedule.length >= 3) return alert("You can select a maximum of 3 days.");
+      
       setCurrentSchedule([...currentSchedule, { day: tempDay, time: tempTime }]);
   };
 
@@ -104,19 +188,17 @@ const StudentDashboard = ({ session }) => {
       setCurrentSchedule(newSched);
   };
 
-  // Submit new course request
-  const handleAddNewCourse = async () => {
-    // Validation
+  const handleSubmitApplication = async () => {
+    if (!courseId) return alert("Please select an instrument.");
     if (currentSchedule.length < 2) return alert("Please select at least 2 class slots.");
     
-    // Format for DB: ["Monday 17:00", "Tuesday 14:00"]
     const formattedDays = currentSchedule.map(s => `${s.day} ${s.time}`);
 
     const { error } = await supabase.from('enrollments').insert([{ 
         student_id: session.user.id, 
         course_id: courseId, 
         preferred_days: formattedDays, 
-        preferred_time: null, // Legacy field ignored
+        preferred_time: null, 
         status: 'pending', 
         joining_date: new Date()
     }]);
@@ -124,16 +206,17 @@ const StudentDashboard = ({ session }) => {
     if (error) {
         alert("Error: " + error.message);
     } else { 
-        alert("Request Sent! Teacher will review it."); 
+        alert(isRescheduling 
+            ? "Reschedule Request Sent! The teacher will review your new time." 
+            : "Request Sent! Teacher will review it."
+        ); 
         setShowEnrollModal(false); 
-        setCurrentSchedule([]); 
         fetchDashboardData(); 
     }
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center text-indigo-600 font-bold">Loading...</div>;
   
-  // Logic: Payment is due if balance is 0 OR they haven't paid specifically for this month
   const isPaymentDue = balance <= 0 || !hasPaidThisMonth; 
 
   return (
@@ -144,56 +227,117 @@ const StudentDashboard = ({ session }) => {
         <header className="mb-10 flex flex-col md:flex-row justify-between items-center gap-4">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Welcome, {session.user.email.split('@')[0]}! 👋</h1>
-            <p className="text-gray-500">Manage your classes.</p>
+            <div className="flex items-center gap-2 text-gray-500">
+                <p>Manage your classes.</p>
+                <button onClick={() => setShowPasswordModal(true)} className="text-xs flex items-center gap-1 bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded text-gray-700 font-bold transition-colors">
+                    <Key size={12}/> Change Password
+                </button>
+            </div>
           </div>
-          <button 
-            onClick={() => setShowEnrollModal(true)} 
-            className="bg-black text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-gray-800 transition-all shadow-lg"
-          >
-            <Plus size={20}/> Enroll New Course
-          </button>
+          
+          <div className="flex gap-2">
+            <button 
+                onClick={handleAddClick} 
+                className="bg-black text-white px-4 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-gray-800 transition-all shadow-lg"
+            >
+                <Plus size={20}/> <span className="hidden sm:inline">Enroll New Course</span>
+            </button>
+            {/* LOGOUT BUTTON RESTORED */}
+            <button 
+                onClick={handleLogout} 
+                className="bg-white border border-gray-300 text-gray-700 px-4 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-gray-50 transition-all shadow-sm"
+                title="Log Out"
+            >
+                <LogOut size={20}/>
+            </button>
+          </div>
         </header>
 
         {/* ACTIVE COURSES GRID */}
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
-            {enrollments.map((enrollment) => (
-                <div 
-                    key={enrollment.id} 
-                    className={`p-6 rounded-2xl shadow-sm border relative overflow-hidden transition-all hover:shadow-md
-                    ${enrollment.status === 'active' ? 'bg-gradient-to-br from-indigo-600 to-purple-700 text-white border-transparent' : 'bg-white border-gray-200 text-gray-800'}`}
-                >
-                    <div className={`absolute top-4 right-4 text-[10px] font-bold px-2 py-1 rounded uppercase ${enrollment.status === 'active' ? 'bg-white/20 text-white' : 'bg-yellow-100 text-yellow-700'}`}>
-                        {enrollment.status === 'active' ? 'Active' : 'Pending'}
-                    </div>
-                    
-                    <h2 className="text-lg font-bold flex items-center gap-2 mb-4">
-                        <Music size={20} className={enrollment.status === 'active' ? 'text-indigo-200' : 'text-indigo-600'}/> 
-                        {enrollment.courses?.name}
-                    </h2>
-                    
-                    {enrollment.status === 'active' ? (
-                        <>
-                            <div className="text-xs uppercase font-bold opacity-60 mb-2">My Schedule</div>
-                            <div className="space-y-1">
-                                {enrollment.preferred_days.map((dayStr, i) => (
-                                    <div key={i} className="font-mono font-bold text-sm bg-white/10 px-2 py-1 rounded inline-block w-full">
-                                        {dayStr.replace(' ', ' @ ')}
+            {enrollments.map((enrollment) => {
+                const isActive = enrollment.status === 'active';
+                const isRescheduleAttempt = !isActive && enrollments.some(e => e.course_id === enrollment.course_id && e.status === 'active' && e.id !== enrollment.id);
+
+                return (
+                    <div 
+                        key={enrollment.id} 
+                        className={`p-6 rounded-2xl shadow-sm border relative overflow-hidden transition-all hover:shadow-md flex flex-col h-full
+                        ${isActive ? 'bg-gradient-to-br from-indigo-600 to-purple-700 text-white border-transparent' : 'bg-white border-gray-200 text-gray-800'}`}
+                    >
+                        {/* Status Badge */}
+                        <div className={`absolute top-4 right-4 text-[10px] font-bold px-2 py-1 rounded uppercase ${isActive ? 'bg-white/20 text-white' : 'bg-yellow-100 text-yellow-700'}`}>
+                            {isRescheduleAttempt ? 'Reschedule Req.' : (isActive ? 'Active' : 'Pending')}
+                        </div>
+                        
+                        <h2 className="text-lg font-bold flex items-center gap-2 mb-4">
+                            <Music size={20} className={isActive ? 'text-indigo-200' : 'text-indigo-600'}/> 
+                            {enrollment.courses?.name}
+                        </h2>
+                        
+                        {/* Schedule Display */}
+                        <div className="flex-1">
+                            {isActive ? (
+                                <>
+                                    <div className="text-xs uppercase font-bold opacity-60 mb-2">Current Schedule</div>
+                                    <div className="space-y-1 mb-6">
+                                        {enrollment.preferred_days.map((dayStr, i) => (
+                                            <div key={i} className="font-mono font-bold text-sm bg-white/10 px-2 py-1 rounded inline-block w-full">
+                                                {dayStr.replace(' ', ' @ ')}
+                                            </div>
+                                        ))}
                                     </div>
-                                ))}
+                                </>
+                            ) : (
+                                <>
+                                    <div className="text-xs uppercase font-bold text-gray-400 mb-2">Requested</div>
+                                    <div className="space-y-1">
+                                        {enrollment.preferred_days.map((dayStr, i) => (
+                                            <div key={i} className="font-mono font-bold text-sm bg-gray-100 px-2 py-1 rounded inline-block w-full text-gray-600">
+                                                {dayStr.replace(' ', ' @ ')}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="mt-4 flex items-center gap-2 text-xs text-orange-600 bg-orange-50 p-2 rounded border border-orange-100 mb-4">
+                                        <Clock size={14}/> <span>Waiting for teacher approval.</span>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+
+                        {/* Action Buttons */}
+                        {isActive ? (
+                            <div className="flex gap-2 mt-4 pt-4 border-t border-white/10">
+                                <button 
+                                    onClick={() => handleRescheduleClick(enrollment.course_id)}
+                                    className="flex-1 bg-white/20 hover:bg-white/30 text-white py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-colors"
+                                    title="Change Schedule"
+                                >
+                                    <RefreshCw size={14} /> Change Time
+                                </button>
+                                <button 
+                                    onClick={() => handleDropCourse(enrollment.id, enrollment.courses?.name)}
+                                    className="bg-red-500/80 hover:bg-red-500 text-white px-3 py-2 rounded-lg transition-colors flex items-center justify-center"
+                                    title="Drop Course"
+                                >
+                                    <Trash2 size={16} />
+                                </button>
                             </div>
-                        </>
-                    ) : (
-                        <p className="text-sm text-gray-500 mt-2">
-                            Request sent.<br/>Waiting for teacher approval.
-                        </p>
-                    )}
-                </div>
-            ))}
+                        ) : (
+                            <button 
+                                onClick={() => handleCancelRequest(enrollment.id)}
+                                className="mt-auto w-full border border-gray-200 text-gray-500 hover:text-red-600 hover:bg-red-50 py-2 rounded-lg text-xs font-bold transition-colors"
+                            >
+                                Cancel Request
+                            </button>
+                        )}
+                    </div>
+                );
+            })}
         </div>
 
-        {/* STATS ROW (Credits Card Removed) */}
+        {/* STATS ROW */}
         <div className="grid md:grid-cols-2 gap-6 mb-10">
-          {/* Card 1: Classes This Month */}
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
              <div className="flex items-center gap-3 mb-2 text-gray-500">
                 <Calendar size={20} /> <span className="font-bold uppercase text-xs">Classes This Month</span>
@@ -201,7 +345,6 @@ const StudentDashboard = ({ session }) => {
              <div className="text-4xl font-bold text-gray-900">{classesThisMonth}</div>
           </div>
 
-          {/* Card 2: Status */}
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
              <div className="flex items-center gap-3 mb-2 text-gray-500">
                 <TrendingUp size={20} /> <span className="font-bold uppercase text-xs">Account Status</span>
@@ -215,8 +358,6 @@ const StudentDashboard = ({ session }) => {
 
         {/* BOTTOM SECTION: PAYMENT & HISTORY */}
         <div className="grid lg:grid-cols-3 gap-8">
-          
-          {/* Payment Column */}
           <div className="lg:col-span-1">
              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                 <div className="p-4 bg-gray-50 border-b border-gray-100 font-bold text-gray-700 flex items-center gap-2">
@@ -246,7 +387,6 @@ const StudentDashboard = ({ session }) => {
              </div>
           </div>
 
-          {/* History Column */}
           <div className="lg:col-span-2">
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                 <div className="p-6 border-b border-gray-100">
@@ -263,7 +403,6 @@ const StudentDashboard = ({ session }) => {
                         </thead>
                         <tbody className="divide-y divide-gray-100">
                             {history.map((record) => {
-                                // Parse Reason String: "Class Attended: Piano" -> ["Class Attended", "Piano"]
                                 const parts = record.reason.split(':');
                                 const mainReason = parts[0]; 
                                 const instrument = parts[1] ? parts[1].trim() : null;
@@ -297,25 +436,28 @@ const StudentDashboard = ({ session }) => {
         </div>
       </div>
 
-      {/* --- ADD COURSE MODAL (UPDATED SCHEDULER) --- */}
+      {/* --- ADD COURSE MODAL (REUSED FOR NEW & RESCHEDULE) --- */}
       {showEnrollModal && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 animate-in fade-in">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 relative">
                 <button onClick={() => setShowEnrollModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-black"><X size={24}/></button>
                 
-                <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
-                    <Plus className="text-indigo-600"/> Add Course
+                <h2 className="text-2xl font-bold mb-1 flex items-center gap-2">
+                    {isRescheduling ? <RefreshCw className="text-indigo-600"/> : <Plus className="text-indigo-600"/>}
+                    {isRescheduling ? 'Reschedule Class' : 'Add Course'}
                 </h2>
+                {isRescheduling && <p className="text-sm text-gray-500 mb-4">Request a new time slot for <span className="font-bold">{getInstrumentName(courseId)}</span>.</p>}
                 
-                <div className="space-y-4">
-                    {/* Instrument Selector */}
+                <div className="space-y-4 mt-4">
                     <div>
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Instrument</label>
                         <select 
                             value={courseId} 
                             onChange={(e) => setCourseId(e.target.value)} 
-                            className="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none bg-white focus:border-indigo-500"
+                            disabled={isRescheduling} 
+                            className={`w-full px-4 py-2 rounded-lg border border-gray-200 outline-none bg-white focus:border-indigo-500 ${isRescheduling ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''}`}
                         >
+                            <option value="" disabled>Select Instrument</option>
                             <option value="1">Piano</option>
                             <option value="4">Guitar</option>
                             <option value="6">Keyboard (Western)</option>
@@ -326,23 +468,21 @@ const StudentDashboard = ({ session }) => {
                         </select>
                     </div>
 
-                    {/* NEW: Day+Time Scheduler */}
                     <div className="bg-gray-50 p-3 rounded border border-gray-200">
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Select your dates</label>
                         <div className="flex gap-2 mb-2">
-                            <select value={tempDay} onChange={(e) => setTempDay(e.target.value)} className="border p-2 rounded text-sm flex-1 font-bold text-gray-700">
+                            <select value={tempDay} onChange={(e) => setTempDay(e.target.value)} className="border p-2 rounded text-sm flex-1 font-bold text-gray-700 outline-none">
                                 {daysOptions.map(d => <option key={d} value={d}>{d}</option>)}
                             </select>
-                            <select value={tempTime} onChange={(e) => setTempTime(e.target.value)} className="border p-2 rounded text-sm flex-1 font-bold text-gray-700">
+                            <select value={tempTime} onChange={(e) => setTempTime(e.target.value)} className="border p-2 rounded text-sm flex-1 font-bold text-gray-700 outline-none">
                                 {timeSlots.map(t => <option key={t} value={t}>{formatTime(t)}</option>)}
                             </select>
                             <button onClick={handleAddSlot} className="bg-indigo-600 text-white px-3 rounded text-sm font-bold hover:bg-indigo-700">Add</button>
                         </div>
 
-                        {/* List of Added Slots */}
                         <div className="space-y-1">
                             {currentSchedule.map((s, idx) => (
-                                <div key={idx} className="flex justify-between items-center bg-white border border-gray-200 p-2 rounded text-sm">
+                                <div key={idx} className="flex justify-between items-center bg-white border border-gray-200 p-2 rounded text-sm animate-in fade-in">
                                     <span className="font-bold text-gray-800">{s.day} @ {formatTime(s.time)}</span>
                                     <button onClick={() => handleRemoveSlot(idx)} className="text-red-500 hover:text-red-700"><Trash2 size={16}/></button>
                                 </div>
@@ -354,15 +494,45 @@ const StudentDashboard = ({ session }) => {
                     </div>
 
                     <button 
-                        onClick={handleAddNewCourse} 
+                        onClick={handleSubmitApplication} 
                         className="w-full bg-indigo-600 text-white font-bold py-3 rounded-lg mt-4 shadow-lg hover:bg-indigo-700 transition-all flex items-center justify-center gap-2"
                     >
-                        Send Request <ArrowRight size={18}/>
+                        {isRescheduling ? 'Submit Reschedule Request' : 'Send Enrollment Request'} <ArrowRight size={18}/>
                     </button>
                 </div>
             </div>
         </div>
       )}
+
+      {/* --- NEW: PASSWORD CHANGE MODAL --- */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 animate-in fade-in">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 relative">
+                <button onClick={() => setShowPasswordModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-black"><X size={24}/></button>
+                <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><Key className="text-indigo-600"/> Change Password</h2>
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">New Password</label>
+                        <input 
+                            type="password" 
+                            value={newPassword} 
+                            onChange={(e) => setNewPassword(e.target.value)} 
+                            className="w-full border p-2 rounded outline-none focus:border-indigo-500"
+                            placeholder="Min 6 chars"
+                        />
+                    </div>
+                    <button 
+                        onClick={handleChangePassword} 
+                        disabled={passwordLoading}
+                        className="w-full bg-indigo-600 text-white font-bold py-2 rounded hover:bg-indigo-700"
+                    >
+                        {passwordLoading ? 'Updating...' : 'Update Password'}
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
     </div>
   );
 };
