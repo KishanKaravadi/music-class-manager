@@ -7,6 +7,7 @@ const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [isForgotPassword, setIsForgotPassword] = useState(false);
   const navigate = useNavigate();
 
   const handleLogin = async (e) => {
@@ -18,14 +19,35 @@ const Login = () => {
       alert("⚠️ " + error.message);
       setLoading(false);
     } else {
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from('profiles')
         .select('role')
         .eq('id', data.user.id)
         .single();
       
-      if (profile?.role === 'admin') navigate('/teacher');
-      else navigate('/student');
+      if (profileError || !profile) {
+          setLoading(false);
+          // Let App.jsx router handle the missing profile safely now
+      } else {
+          if (profile.role === 'admin') navigate('/teacher');
+          else navigate('/student');
+      }
+    }
+  };
+
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+    if (!email) return alert('Please enter your email first.');
+    setLoading(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    setLoading(false);
+    if (error) {
+      alert("⚠️ " + error.message);
+    } else {
+      alert("Password reset email sent! Please check your inbox.");
+      setIsForgotPassword(false);
     }
   };
 
@@ -54,10 +76,14 @@ const Login = () => {
       {/* Right Side - The Form */}
       <div className="w-full lg:w-1/2 flex items-center justify-center p-8">
         <div className="max-w-md w-full">
-          <h2 className="text-3xl font-bold text-gray-900 mb-2">Welcome Back! 👋</h2>
-          <p className="text-gray-500 mb-8">Please enter your details to sign in.</p>
+          <h2 className="text-3xl font-bold text-gray-900 mb-2">
+            {isForgotPassword ? 'Reset Password' : 'Welcome Back! 👋'}
+          </h2>
+          <p className="text-gray-500 mb-8">
+            {isForgotPassword ? 'Enter your email to receive a reset link.' : 'Please enter your details to sign in.'}
+          </p>
 
-          <form onSubmit={handleLogin} className="space-y-5">
+          <form onSubmit={isForgotPassword ? handleForgotPassword : handleLogin} className="space-y-5">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
               <input
@@ -68,24 +94,38 @@ const Login = () => {
                 onChange={(e) => setEmail(e.target.value)}
               />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-              <input
-                type="password"
-                required
-                className="w-full px-4 py-3 rounded-lg border border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 transition-all outline-none"
-                placeholder="••••••••"
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </div>
+            
+            {!isForgotPassword && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                <input
+                  type="password"
+                  required
+                  className="w-full px-4 py-3 rounded-lg border border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 transition-all outline-none"
+                  placeholder="••••••••"
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+            )}
 
             <button 
               disabled={loading}
               className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg transition-all flex items-center justify-center gap-2"
             >
-              {loading ? 'Signing In...' : 'Sign In'}
-              {!loading && <ArrowRight size={20} />}
+              {loading ? 'Please Wait...' : (isForgotPassword ? 'Send Reset Link' : 'Sign In')}
+              {!loading && !isForgotPassword && <ArrowRight size={20} />}
             </button>
+
+            {!isForgotPassword && (
+              <div className="text-right mt-2">
+                <button type="button" onClick={() => setIsForgotPassword(true)} className="text-sm text-indigo-600 font-bold hover:underline">Forgot Password?</button>
+              </div>
+            )}
+            {isForgotPassword && (
+              <div className="text-center mt-4">
+                <button type="button" onClick={() => setIsForgotPassword(false)} className="text-sm text-gray-500 font-bold hover:text-gray-800">Back to Login</button>
+              </div>
+            )}
           </form>
 
           <p className="mt-8 text-center text-gray-600 text-sm">

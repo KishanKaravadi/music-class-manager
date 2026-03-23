@@ -30,10 +30,13 @@ const StudentDashboard = ({ session }) => {
   // State to track if we are rescheduling (locking the instrument)
   const [isRescheduling, setIsRescheduling] = useState(false);
 
-  // Change Password State
+  // Settings & Profile State
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [passwordLoading, setPasswordLoading] = useState(false);
+  const [profileName, setProfileName] = useState('');
+  const [profilePhone, setProfilePhone] = useState('');
+  const [profileEmail, setProfileEmail] = useState('');
 
   const daysOptions = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
   
@@ -72,30 +75,42 @@ const StudentDashboard = ({ session }) => {
     const userId = session.user.id;
     const currentMonthName = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
 
+    // 0. Get Profile Data
+    const { data: profileData } = await supabase.from('profiles').select('full_name, phone_number, email').eq('id', userId).single();
+    if (profileData) {
+      setProfileName(profileData.full_name);
+      setProfilePhone(profileData.phone_number);
+      setProfileEmail(profileData.email || session.user.email);
+    }
+
     // 1. Get Enrollments
     const { data: enrollmentData } = await supabase.from('enrollments').select('*, courses(name)').eq('student_id', userId);
     if (enrollmentData) setEnrollments(enrollmentData);
 
-    // 2. Get Ledger & Balance
-    const { data: ledgerData } = await supabase.from('credit_ledger').select('*').eq('student_id', userId).order('created_at', { ascending: false });
+    // 2. Get Ledger History & Balance
+    const { data: balanceData } = await supabase.from('student_balances').select('balance').eq('student_id', userId).maybeSingle();
+    const { data: ledgerData } = await supabase.from('credit_ledger').select('*').eq('student_id', userId).lt('amount', 0).order('created_at', { ascending: false }).limit(50);
     
     // 3. Get Payment Status
     const { data: paymentData } = await supabase.from('payments').select('id').eq('student_id', userId).eq('status', 'pending');
     const { data: monthlyPayment } = await supabase.from('payments').select('id').eq('student_id', userId).eq('status', 'approved').eq('month_for', currentMonthName).maybeSingle();
 
+    if (balanceData) {
+      setBalance(balanceData.balance || 0);
+    } else {
+      setBalance(0);
+    }
+
     if (ledgerData) {
-      const currentBalance = ledgerData.reduce((acc, curr) => acc + curr.amount, 0);
-      setBalance(currentBalance); 
-      
-      const attendanceRecords = ledgerData.filter(item => item.amount < 0);
-      setHistory(attendanceRecords);
+      setHistory(ledgerData);
       
       const now = new Date();
-      setClassesThisMonth(attendanceRecords.filter(r => { 
+      setClassesThisMonth(ledgerData.filter(r => { 
           const d = new Date(r.created_at); 
           return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); 
       }).length);
     }
+
 
     if (paymentData && paymentData.length > 0) setHasPendingPayment(true);
     setHasPaidThisMonth(!!monthlyPayment); 
@@ -154,6 +169,34 @@ const StudentDashboard = ({ session }) => {
       setIsRescheduling(false); // Normal mode
       setCurrentSchedule([]);
       setShowEnrollModal(true);
+  };
+
+  // Update Profile
+  const handleUpdateProfile = async () => {
+      setPasswordLoading(true);
+
+      if (profileEmail !== session.user.email) {
+          const { error: authError } = await supabase.auth.updateUser({ email: profileEmail });
+          if (authError) {
+              alert("Error updating login email: " + authError.message);
+              setPasswordLoading(false);
+              return;
+          }
+          alert("Email changed! Depending on your security settings, you may need to confirm the new email via an inbox link before you can log in again.");
+      }
+
+      const { error } = await supabase.from('profiles').update({
+          full_name: profileName,
+          phone_number: profilePhone,
+          email: profileEmail
+      }).eq('id', session.user.id);
+
+      if (error) {
+          alert("Error updating profile: " + error.message);
+      } else {
+          alert("Profile updated successfully!");
+      }
+      setPasswordLoading(false);
   };
 
   // Update Password
@@ -226,11 +269,11 @@ const StudentDashboard = ({ session }) => {
         {/* HEADER */}
         <header className="mb-10 flex flex-col md:flex-row justify-between items-center gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Welcome, {session.user.email.split('@')[0]}! 👋</h1>
+            <h1 className="text-3xl font-bold text-gray-900">Welcome, {profileName || session.user.email.split('@')[0]}! 👋</h1>
             <div className="flex items-center gap-2 text-gray-500">
                 <p>Manage your classes.</p>
                 <button onClick={() => setShowPasswordModal(true)} className="text-xs flex items-center gap-1 bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded text-gray-700 font-bold transition-colors">
-                    <Key size={12}/> Change Password
+                    <Settings size={12}/> Settings
                 </button>
             </div>
           </div>
@@ -504,13 +547,53 @@ const StudentDashboard = ({ session }) => {
         </div>
       )}
 
-      {/* --- NEW: PASSWORD CHANGE MODAL --- */}
+      {/* --- SETTINGS MODAL --- */}
       {showPasswordModal && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 animate-in fade-in">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 relative">
                 <button onClick={() => setShowPasswordModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-black"><X size={24}/></button>
-                <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><Key className="text-indigo-600"/> Change Password</h2>
+                <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><Settings className="text-indigo-600"/> Account Settings</h2>
+                
+                <div className="space-y-4 mb-6 pb-6 border-b border-gray-100">
+                    <h3 className="font-bold text-gray-700 text-sm uppercase">Profile</h3>
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">Full Name</label>
+                        <input 
+                            type="text" 
+                            value={profileName} 
+                            onChange={(e) => setProfileName(e.target.value)} 
+                            className="w-full border p-2 rounded outline-none focus:border-indigo-500"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">Email Address</label>
+                        <input 
+                            type="email" 
+                            value={profileEmail} 
+                            onChange={(e) => setProfileEmail(e.target.value)} 
+                            className="w-full border p-2 rounded outline-none focus:border-indigo-500"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">Phone Number</label>
+                        <input 
+                            type="text" 
+                            value={profilePhone} 
+                            onChange={(e) => setProfilePhone(e.target.value)} 
+                            className="w-full border p-2 rounded outline-none focus:border-indigo-500"
+                        />
+                    </div>
+                    <button 
+                        onClick={handleUpdateProfile} 
+                        disabled={passwordLoading}
+                        className="w-full bg-black text-white font-bold py-2 rounded hover:bg-gray-800 transition-colors"
+                    >
+                        {passwordLoading ? 'Updating...' : 'Save Profile'}
+                    </button>
+                </div>
+
                 <div className="space-y-4">
+                    <h3 className="font-bold text-gray-700 text-sm uppercase">Security</h3>
                     <div>
                         <label className="block text-xs font-bold text-gray-500 mb-1">New Password</label>
                         <input 
@@ -524,7 +607,7 @@ const StudentDashboard = ({ session }) => {
                     <button 
                         onClick={handleChangePassword} 
                         disabled={passwordLoading}
-                        className="w-full bg-indigo-600 text-white font-bold py-2 rounded hover:bg-indigo-700"
+                        className="w-full bg-indigo-600 text-white font-bold py-2 rounded hover:bg-indigo-700 transition-colors"
                     >
                         {passwordLoading ? 'Updating...' : 'Update Password'}
                     </button>

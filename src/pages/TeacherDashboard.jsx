@@ -118,12 +118,11 @@ const TeacherDashboard = () => {
         
     if (attendance) setAttendanceRecordsToday(attendance);
 
-    const { data: allLedger } = await supabase.from('credit_ledger').select('student_id, amount');
-    if (allLedger) {
+    const { data: allBalances } = await supabase.from('student_balances').select('*');
+    if (allBalances) {
         const balances = {};
-        allLedger.forEach(entry => {
-            if (!balances[entry.student_id]) balances[entry.student_id] = 0;
-            balances[entry.student_id] += entry.amount;
+        allBalances.forEach(entry => {
+            balances[entry.student_id] = entry.balance;
         });
         setStudentBalances(balances);
     }
@@ -136,19 +135,7 @@ const TeacherDashboard = () => {
     const { error: paymentError } = await supabase.from('payments').update({ status: 'approved' }).eq('id', paymentId);
     if (paymentError) return alert("Error approving payment");
 
-    const activeCourseCount = activeRoster.filter(r => r.student_id === studentId).length;
-    const creditsNeeded = activeCourseCount * 12;
-    const creditsFromTrigger = 12; 
-    const creditsToManualAdd = Math.max(0, creditsNeeded - creditsFromTrigger);
-
-    if (creditsToManualAdd > 0) {
-         await supabase.from('credit_ledger').insert([{ 
-             student_id: studentId, 
-             amount: creditsToManualAdd, 
-             reason: 'Bonus Credits (Multi-Instrument)' 
-         }]);
-    }
-    alert("Payment Approved!");
+    alert("Payment Approved! Credits have been automatically assigned by the database.");
     fetchData();
   };
 
@@ -294,7 +281,7 @@ const TeacherDashboard = () => {
   };
 
   const handleSendReminder = (index, student) => {
-    const msg = `Hello ${student.student.full_name}, friendly reminder to pay your Music Class fees.`;
+    const msg = `keytonemusicacademy.in\n\nHello ${student.student.full_name}, friendly reminder to pay your Music Class fees.`;
     window.open(`https://wa.me/${student.student.phone_number}?text=${encodeURIComponent(msg)}`, '_blank');
     setReminderTargets(prev => { const n = [...prev]; n[index] = { ...n[index], sent: true }; return n; });
   };

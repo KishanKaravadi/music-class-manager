@@ -189,6 +189,7 @@ const Register = () => {
         const { error: profileError } = await supabase.from('profiles').insert([{
             id: userId,
             full_name: personalData.fullName,
+            email: personalData.email,
             phone_number: personalData.phone,
             age: personalData.age,
             role: 'student'
