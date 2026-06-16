@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
-import { 
+import {
   Users, DollarSign, Calendar, CheckCircle, X, Bell, Trash2,
-  History, MessageCircle, User, Search, LayoutDashboard, CreditCard, UserPlus, RefreshCw
+  History, MessageCircle, User, Search, LayoutDashboard, CreditCard, UserPlus, RefreshCw, Key
 } from 'lucide-react';
 
 const TeacherDashboard = () => {
@@ -20,6 +20,8 @@ const TeacherDashboard = () => {
   // Modals
   const [reviewingStudent, setReviewingStudent] = useState(null); // Now handles Swaps too
   const [viewingStudent, setViewingStudent] = useState(null);
+  const [resetResult, setResetResult] = useState(null); // { name, phone, link } after a password-reset
+  const [resetLoading, setResetLoading] = useState(false);
   const [showMasterSchedule, setShowMasterSchedule] = useState(false); 
   const [reminderTargets, setReminderTargets] = useState([]);
   const [showReminderModal, setShowReminderModal] = useState(false);
@@ -300,6 +302,29 @@ const TeacherDashboard = () => {
     alert(`Attendance undone for ${courseName}. 1 credit refunded.`);
   };
 
+  // Generate a one-time password RECOVERY LINK for a locked-out student (admin Edge Function).
+  // The teacher delivers the link manually (WhatsApp). No password is ever exposed/stored.
+  const handleResetPassword = async (enrollment) => {
+    const name = enrollment.student?.full_name || 'this student';
+    if (!window.confirm(`Generate a password reset link for ${name}?\n\nYou'll send it to them on WhatsApp; they set their own new password.`)) return;
+    setResetLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-reset-password', {
+        body: { target_student_id: enrollment.student_id }
+      });
+      if (error) {
+        // Surface the real status/body, not the generic FunctionsHttpError message.
+        let detail = error.message;
+        try { if (error.context) { const b = await error.context.json(); detail = b.error || detail; } } catch { /* ignore */ }
+        alert("Could not generate reset link: " + detail);
+        return;
+      }
+      setResetResult({ name, phone: enrollment.student?.phone_number, link: data.recovery_link });
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
   const handleBulkReminders = () => {
     let targetStudents = activeRoster.filter(s => !pendingPayments.some(p => p.student_id === s.student.id) && !paidStudentIds.includes(s.student.id));
     // De-duplicate by student (a student can be enrolled in multiple courses).
@@ -458,6 +483,7 @@ const TeacherDashboard = () => {
                                             <td className="p-4"><span className={`px-2 py-1 rounded-full text-xs font-bold ${balance <= 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>{balance} Cr</span></td>
                                             <td className="p-4 text-center flex justify-center gap-2">
                                                 <button onClick={() => setViewingStudent(student)} className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded text-xs font-bold">View</button>
+                                                <button onClick={() => handleResetPassword(student)} disabled={resetLoading} title="Reset password" className="bg-amber-50 hover:bg-amber-100 text-amber-700 px-2 py-1 rounded text-xs disabled:opacity-50"><Key size={16}/></button>
                                                 <button onClick={() => handleDeleteStudent(student.id, student.student.full_name, student.courses.name)} className="bg-red-50 hover:bg-red-100 text-red-600 px-2 py-1 rounded text-xs"><Trash2 size={16}/></button>
                                             </td>
                                         </tr>
@@ -771,9 +797,28 @@ const TeacherDashboard = () => {
                         <button onClick={() => handleMarkAttendance(viewingStudent)} className="w-full py-3 rounded-xl flex items-center justify-center gap-2 font-bold transition-colors shadow-sm bg-indigo-600 hover:bg-indigo-700 text-white"><CheckCircle size={18}/> Mark Present (-1 Credit)</button>
                     )}
                     <button onClick={() => window.open(`https://wa.me/${viewingStudent.student.phone_number}`, '_blank')} className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-colors shadow-sm"><MessageCircle size={18} /> WhatsApp</button>
+                    <button onClick={() => handleResetPassword(viewingStudent)} disabled={resetLoading} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-colors shadow-sm disabled:opacity-50"><Key size={18} /> {resetLoading ? 'Generating…' : 'Reset Password'}</button>
                 </div>
             </div>
             </div>
+        </div>
+      )}
+
+      {/* --- PASSWORD RESET LINK RESULT MODAL --- */}
+      {resetResult && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 animate-in fade-in">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 relative">
+            <button onClick={() => setResetResult(null)} className="absolute top-4 right-4 text-gray-400 hover:text-black"><X size={24}/></button>
+            <h2 className="text-xl font-bold mb-1 flex items-center gap-2"><Key className="text-indigo-600"/> Password Reset Link</h2>
+            <p className="text-sm text-gray-500 mb-4">Send this one-time link to <span className="font-bold">{resetResult.name}</span>. They open it, set a new password, then log in. The link expires &mdash; don&apos;t post it publicly.</p>
+            <textarea readOnly value={resetResult.link} onFocus={(e) => e.target.select()} className="w-full text-xs border border-gray-200 rounded p-2 h-24 bg-gray-50 font-mono mb-3" />
+            <div className="flex gap-2">
+              <button onClick={() => { navigator.clipboard?.writeText(resetResult.link); alert('Link copied.'); }} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2 rounded-lg">Copy Link</button>
+              {resetResult.phone && (
+                <button onClick={() => window.open(`https://wa.me/${resetResult.phone}?text=${encodeURIComponent(`Hello ${resetResult.name}, here is your secure link to reset your music class login password:\n\n${resetResult.link}\n\nOpen it, set a new password, then log in.`)}`, '_blank')} className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-2 rounded-lg flex items-center justify-center gap-1"><MessageCircle size={16}/> WhatsApp</button>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
