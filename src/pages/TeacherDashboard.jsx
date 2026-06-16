@@ -271,18 +271,59 @@ const TeacherDashboard = () => {
     }
   };
 
+  // Undo an accidental "Mark Present": remove TODAY's exact attendance ledger row and refund the credit.
+  const handleCancelAttendance = async (enrollment) => {
+    const courseName = enrollment.courses?.name || "Unknown";
+    const reason = `Class Attended: ${courseName}`;
+    if (!window.confirm(`Undo today's attendance for ${enrollment.student.full_name} (${courseName})?\n\nThis refunds 1 credit.`)) return;
+
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    // Look up the specific row created today for THIS student + course, then delete it by id (precise, no broad delete).
+    const { data: rows, error: findErr } = await supabase.from('credit_ledger')
+        .select('id')
+        .eq('student_id', enrollment.student_id)
+        .eq('reason', reason)
+        .gte('created_at', `${todayStr}T00:00:00`)
+        .lte('created_at', `${todayStr}T23:59:59`)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+    if (findErr) return alert("Error finding attendance: " + findErr.message);
+    if (!rows || rows.length === 0) return alert(`No attendance found today for ${courseName} to undo.`);
+
+    const { error: delErr } = await supabase.from('credit_ledger').delete().eq('id', rows[0].id);
+    if (delErr) return alert("Error undoing attendance: " + delErr.message);
+
+    setAttendanceRecordsToday(prev => prev.filter(r => !(r.student_id === enrollment.student_id && r.reason === reason)));
+    setStudentBalances(prev => ({ ...prev, [enrollment.student_id]: (prev[enrollment.student_id] || 0) + 1 }));
+    alert(`Attendance undone for ${courseName}. 1 credit refunded.`);
+  };
+
   const handleBulkReminders = () => {
     let targetStudents = activeRoster.filter(s => !pendingPayments.some(p => p.student_id === s.student.id) && !paidStudentIds.includes(s.student.id));
+    // De-duplicate by student (a student can be enrolled in multiple courses).
     const uniqueStudents = []; const seenIds = new Set();
     targetStudents.forEach(s => { if(!seenIds.has(s.student_id)) { uniqueStudents.push(s); seenIds.add(s.student_id); } });
     if (uniqueStudents.length === 0) return alert("No reminders needed.");
-    setReminderTargets(uniqueStudents.map(s => ({ ...s, sent: false })));
+    // Group by phone number so siblings sharing one WhatsApp number get a SINGLE combined message.
+    const groups = {};
+    uniqueStudents.forEach(s => {
+        const rawPhone = (s.student.phone_number || '').trim();
+        const key = rawPhone || `__nophone_${s.student_id}`;
+        if (!groups[key]) groups[key] = { phone: rawPhone, names: [], sent: false };
+        const name = (s.student.full_name || '').trim();
+        if (name && !groups[key].names.includes(name)) groups[key].names.push(name);
+    });
+    setReminderTargets(Object.values(groups));
     setShowReminderModal(true);
   };
 
-  const handleSendReminder = (index, student) => {
-    const msg = `keytonemusicacademy.in\n\nHello ${student.student.full_name}, friendly reminder to pay your Music Class fees.`;
-    window.open(`https://wa.me/${student.student.phone_number}?text=${encodeURIComponent(msg)}`, '_blank');
+  const handleSendReminder = (index, target) => {
+    const greeting = target.names.length > 0 ? target.names.join(' & ') : 'there';
+    if (!target.phone) return alert(`No phone number on file for ${greeting}.`);
+    const msg = `keytonemusicacademy.in\n\nHello ${greeting}, friendly reminder to pay your Music Class fees.`;
+    window.open(`https://wa.me/${target.phone}?text=${encodeURIComponent(msg)}`, '_blank');
     setReminderTargets(prev => { const n = [...prev]; n[index] = { ...n[index], sent: true }; return n; });
   };
 
@@ -380,7 +421,14 @@ const TeacherDashboard = () => {
                                                     <td className="p-4 text-gray-500">{student.courses?.name} <span className="text-xs bg-gray-100 px-1 rounded border border-gray-200">{getCourseCategory(student.courses?.id)}</span></td>
                                                     <td className="p-4 text-center"><span className={`px-2 py-1 rounded-full text-xs font-bold ${balance <= 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>{balance}</span></td>
                                                     <td className="p-4 text-center">
-                                                        <button onClick={() => handleMarkAttendance(student)} disabled={isPresent} className={`px-3 py-1 rounded-lg font-bold text-xs shadow-sm transition-all ${isPresent ? 'bg-green-100 text-green-700 cursor-not-allowed' : 'bg-white border border-gray-200 text-gray-600 hover:border-indigo-500 hover:text-indigo-600'}`}>{isPresent ? 'Present ✓' : 'Mark Present'}</button>
+                                                        {isPresent ? (
+                                                            <div className="flex items-center justify-center gap-1">
+                                                                <span className="px-3 py-1 rounded-lg font-bold text-xs bg-green-100 text-green-700">Present ✓</span>
+                                                                <button onClick={() => handleCancelAttendance(student)} title="Undo attendance" className="px-2 py-1 rounded-lg text-xs font-bold bg-red-50 text-red-600 hover:bg-red-100 border border-red-100">Undo</button>
+                                                            </div>
+                                                        ) : (
+                                                            <button onClick={() => handleMarkAttendance(student)} className="px-3 py-1 rounded-lg font-bold text-xs shadow-sm transition-all bg-white border border-gray-200 text-gray-600 hover:border-indigo-500 hover:text-indigo-600">Mark Present</button>
+                                                        )}
                                                     </td>
                                                 </tr>
                                             );
@@ -677,7 +725,7 @@ const TeacherDashboard = () => {
 
       {/* --- HISTORY & REMINDER & PROFILE MODALS (Same as before) --- */}
       {showHistory && (<div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"><div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6"><div className="flex justify-between items-center mb-4"><h2 className="text-xl font-bold">History</h2><button onClick={() => setShowHistory(false)}><X/></button></div><input type="date" value={historyDate} onChange={(e) => setHistoryDate(e.target.value)} className="w-full border p-2 rounded mb-4"/><div className="max-h-64 overflow-y-auto space-y-2">{historyRecords.length === 0 ? <div className="text-center text-gray-400 p-4">No classes recorded.</div> : historyRecords.map(r => { const parts = r.reason.split(':'); const instrument = parts[1] ? parts[1].trim() : null; return (<div key={r.id} className="p-3 bg-gray-50 border-l-4 border-indigo-500 flex justify-between items-center"><div><span className="font-bold block">{r.student.full_name}</span>{instrument && <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full uppercase">{instrument}</span>}</div><span className="text-sm text-gray-500">{new Date(r.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span></div>) })}</div></div></div>)}
-      {showReminderModal && (<div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50"><div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 relative"><button onClick={() => setShowReminderModal(false)} className="absolute top-4 right-4 text-gray-400"><X size={28}/></button><h2 className="text-2xl font-bold mb-4">Send Reminders</h2><div className="bg-gray-50 rounded-lg border border-gray-200 max-h-96 overflow-y-auto p-2">{reminderTargets.map((student, index) => (<div key={student.id} className="flex justify-between items-center bg-white p-3 mb-2 rounded border border-gray-100 shadow-sm"><div className="font-bold">{student.student.full_name}</div>{student.sent ? <span className="text-gray-400 font-bold text-sm">Done</span> : <button onClick={() => handleSendReminder(index, student)} className="bg-green-500 text-white px-3 py-1 rounded text-sm font-bold">Send</button>}</div>))}</div></div></div>)}
+      {showReminderModal && (<div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50"><div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 relative"><button onClick={() => setShowReminderModal(false)} className="absolute top-4 right-4 text-gray-400"><X size={28}/></button><h2 className="text-2xl font-bold mb-4">Send Reminders</h2><div className="bg-gray-50 rounded-lg border border-gray-200 max-h-96 overflow-y-auto p-2">{reminderTargets.map((target, index) => (<div key={target.phone || index} className="flex justify-between items-center bg-white p-3 mb-2 rounded border border-gray-100 shadow-sm"><div><div className="font-bold">{target.names.join(' & ') || 'Unknown'}</div>{target.names.length > 1 && <div className="text-[10px] text-indigo-600 font-bold uppercase">Combined · 1 message to {target.names.length} siblings</div>}</div>{target.sent ? <span className="text-gray-400 font-bold text-sm">Done</span> : <button onClick={() => handleSendReminder(index, target)} className="bg-green-500 text-white px-3 py-1 rounded text-sm font-bold">Send</button>}</div>))}</div></div></div>)}
       {viewingStudent && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 animate-in fade-in">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden relative">
@@ -714,7 +762,14 @@ const TeacherDashboard = () => {
                     </div>
                 </div>
                 <div className="pt-2 flex flex-col gap-3">
-                    <button onClick={() => handleMarkAttendance(viewingStudent)} disabled={attendanceRecordsToday.some(r => r.student_id === viewingStudent.student_id && r.reason.includes(viewingStudent.courses.name))} className={`w-full py-3 rounded-xl flex items-center justify-center gap-2 font-bold transition-colors shadow-sm ${attendanceRecordsToday.some(r => r.student_id === viewingStudent.student_id && r.reason.includes(viewingStudent.courses.name)) ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}><CheckCircle size={18}/> {attendanceRecordsToday.some(r => r.student_id === viewingStudent.student_id && r.reason.includes(viewingStudent.courses.name)) ? 'Marked Present Today' : 'Mark Present (-1 Credit)'}</button>
+                    {attendanceRecordsToday.some(r => r.student_id === viewingStudent.student_id && r.reason.includes(viewingStudent.courses?.name)) ? (
+                        <div className="flex gap-2">
+                            <span className="flex-1 py-3 rounded-xl flex items-center justify-center gap-2 font-bold bg-green-100 text-green-700"><CheckCircle size={18}/> Marked Present Today</span>
+                            <button onClick={() => handleCancelAttendance(viewingStudent)} className="px-4 py-3 rounded-xl font-bold bg-red-50 text-red-600 hover:bg-red-100 border border-red-100">Undo</button>
+                        </div>
+                    ) : (
+                        <button onClick={() => handleMarkAttendance(viewingStudent)} className="w-full py-3 rounded-xl flex items-center justify-center gap-2 font-bold transition-colors shadow-sm bg-indigo-600 hover:bg-indigo-700 text-white"><CheckCircle size={18}/> Mark Present (-1 Credit)</button>
+                    )}
                     <button onClick={() => window.open(`https://wa.me/${viewingStudent.student.phone_number}`, '_blank')} className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-colors shadow-sm"><MessageCircle size={18} /> WhatsApp</button>
                 </div>
             </div>
