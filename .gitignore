@@ -26,3 +26,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local-only: contains real student PII (names/phone/UUID)
+_meta/research/schema-verified.md
