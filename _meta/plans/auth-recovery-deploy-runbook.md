@@ -51,5 +51,26 @@ Only after steps 1–4 pass: mark PR #2 **Ready for review** and merge to `main`
 - Trigger/audit: additive; drop the trigger/table if ever needed (`drop trigger ... ; drop table ...`).
 
 ## Operator gate
-Status: `pending` until steps 1–5 verified. Record results here + in the shipped-handoff
-before closing.
+Status: `exercised 2026-06-16 (deploy verified; teacher end-to-end pending)`.
+
+Deployed + verified 2026-06-16:
+- Step 1 role-pin trigger: applied; verified `prevent_profile_privilege_change` is SECURITY
+  INVOKER (prosecdef=false) and trigger `profiles_prevent_privilege_change` present. Privilege
+  escalation closed.
+- Step 2 admin_audit: applied; table present, RLS enabled, 0 client policies (deny-all).
+- Step 3 profiles SELECT: applied; old `Public profiles are viewable by everyone` (USING true)
+  dropped, replaced by `Profiles selectable by owner or teacher` (auth.uid()=id OR is_teacher()).
+  PII exposure closed.
+- Step 4 Edge Function: deployed via CLI (token in ~/.supabase), `admin-reset-password` status
+  ACTIVE, verify_jwt=true; APP_URL secret set; unauth POST → HTTP 401 (gate works).
+- Step 5: PR #2 squash-merged to main (4f3ce85) → Vercel deploying frontend.
+
+REMAINING (teacher, re-check 2026-06-16/17): end-to-end on the live app —
+(a) open a student → Reset Password → send link → open it → set new password → log in;
+(b) confirm an `admin_audit` row with success=true; (c) sanity: student login + teacher
+roster still load (Step 3 read change). Record result here.
+
+NOTE: migrations were applied via the Dashboard SQL editor (raw SQL), so they are NOT in
+`supabase_migrations.schema_migrations` history. They are idempotent (drop-if-exists /
+create-or-replace / if-not-exists). If you later adopt `supabase db push`, run
+`supabase migration repair` or mark them applied to avoid re-apply drift.
