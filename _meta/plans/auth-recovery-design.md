@@ -77,6 +77,18 @@ Two pre-existing prod vulnerabilities surfaced by the consult (independent of th
 
 Both are prod writes → operator runs reviewed SQL (MCP is read-only). Sequence: hardening (1 then 2, tested) → then build the recovery feature.
 
+## Codex implementation review (pre-ship lens) — REVISE → fixed → re-bless GO
+
+After coding, Codex reviewed the IMPLEMENTATION (not just design). Verdict REVISE → all fixed:
+- **BLOCKER:** role-pin trigger was `SECURITY DEFINER` → `current_user` = function owner, so the `anon/authenticated` guard NEVER fired (the pin was a silent no-op). Fixed → `SECURITY INVOKER`. [[gotcha: definer-trigger-current_user]]
+- **MAJOR:** audit/rate-limit failed open → now check query/insert errors, return 500; success audit FAILS CLOSED (no link returned if audit insert errors).
+- **MAJOR:** added per-target rate limit (5/10min) atop per-admin (10/60s).
+- **MINOR:** request_id populated; outer try/catch + env validation (CORS+JSON on every path); Reset button added to directory row.
+
+**Re-bless: VERDICT GO** — trigger correctly blocks client role/id mutation (allows service-role/superuser; normal edits pass); function has no auth-bypass / fail-open path.
+
+Gate status: Codex design ✓ → impl review ✓ → re-bless GO ✓. Operator gate = the deploy runbook (`auth-recovery-deploy-runbook.md`), status `pending` until applied+verified. (tearitapart's runtime/security lens was folded into the Codex impl review for this workstream.)
+
 ## Open questions for Codex
 1. Is the admin-verification chain (anon-client `getUser` → `profiles.role` check → only then service client) the right, minimal, non-bypassable shape? Any privilege-escalation hole?
 2. Plaintext temp password returned to the teacher + sent over WhatsApp — acceptable risk for this context, or should we instead generate a one-time **recovery link** (`admin.generateLink({type:'recovery'})`) the teacher forwards? Trade-offs given fake emails (a recovery LINK doesn't need the email inbox — it's a URL — so it may be strictly better than a plaintext password). Evaluate.
