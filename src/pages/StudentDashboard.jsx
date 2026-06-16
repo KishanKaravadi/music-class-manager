@@ -233,7 +233,7 @@ const StudentDashboard = ({ session }) => {
 
   const handleSubmitApplication = async () => {
     if (!courseId) return alert("Please select an instrument.");
-    if (currentSchedule.length < 2) return alert("Please select at least 2 class slots.");
+    if (currentSchedule.length < 1) return alert("Please select at least 1 class slot.");
     
     const formattedDays = currentSchedule.map(s => `${s.day} ${s.time}`);
 
@@ -531,7 +531,7 @@ const StudentDashboard = ({ session }) => {
                                 </div>
                             ))}
                             {currentSchedule.length === 0 && (
-                                <div className="text-center text-xs text-gray-400 italic py-2">No slots added. Add at least 2.</div>
+                                <div className="text-center text-xs text-gray-400 italic py-2">No slots added. Add at least 1.</div>
                             )}
                         </div>
                     </div>

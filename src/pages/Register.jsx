@@ -143,7 +143,7 @@ const Register = () => {
     const handleAddCourseToQueue = () => {
         // Validate
         if (!currentCourseId) return alert("Please select an instrument.");
-        if (currentSchedule.length < 2) return alert("Please select at least 2 class slots.");
+        if (currentSchedule.length < 1) return alert("Please select at least 1 class slot.");
         if (!demoAgreed) return alert("Please agree to the Demo Class policy.");
 
         // Format schedule for DB
