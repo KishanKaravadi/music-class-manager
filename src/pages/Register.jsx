@@ -248,7 +248,13 @@ const Register = () => {
                     {step === 1 && (
                         <div className="animate-in slide-in-from-right fade-in duration-300">
                             <h2 className="text-3xl font-bold text-gray-900 mb-2">Create Student Account</h2>
-                            <p className="text-gray-500 mb-8">Step 1 of 2: Personal Details</p>
+                            <p className="text-gray-500 mb-6">Step 1 of 2: Personal Details</p>
+
+                            {/* Duplicate-account nudge: most "lost account" cases are a forgotten password, not a missing account. */}
+                            <div className="mb-8 bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-900">
+                                <span className="font-bold">Already enrolled before?</span> Please don&apos;t create a second account &mdash; it splits your class history and credits.
+                                {' '}<Link to="/login" className="font-bold underline text-amber-900">Log in instead</Link>, or ask your teacher to send you a password reset link.
+                            </div>
 
                             <form onSubmit={handleNextStep} className="space-y-6">
                                 <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 space-y-4">
